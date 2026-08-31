@@ -12,14 +12,18 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  # Queue deploys rather than cancelling one mid-flight.
+  cancel-in-progress: false
 
+# Build and deploy are separate jobs on purpose. With both in one job,
+# "Re-run failed jobs" after a deploy failure re-runs the upload too, and the
+# run then holds two artifacts named github-pages — which deploy-pages refuses
+# with "Multiple artifacts named github-pages were unexpectedly found".
+# Split, a re-run of the failed deploy reuses the artifact the build already
+# uploaded.
 jobs:
-  build-and-deploy:
+  build:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -31,9 +35,19 @@ jobs:
       - run: npx vitest run
       - run: npx vite build
         env:
+          # Unset secret builds fine — the app falls back to the offline style
+          # and says so on screen, rather than rendering blank tiles.
           VITE_MAPTILER_KEY: ${{ secrets.MAPTILER_KEY }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - id: deployment
         uses: actions/deploy-pages@v4
