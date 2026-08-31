@@ -1,0 +1,43 @@
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+}
+
+.app {
+  position: relative;
+  height: 100%;
+  font-family: system-ui, sans-serif;
+}
+
+.map-container {
+  position: absolute;
+  inset: 0;
+}
+
+.badge {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  padding: 4px 10px;
+  background: rgba(255, 255, 255, 0.85);
+  border-radius: 6px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  pointer-events: none;
+}
+
+.fallback-notice {
+  position: absolute;
+  bottom: 28px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 80%;
+  padding: 6px 12px;
+  background: rgba(40, 36, 30, 0.85);
+  color: #f2ede4;
+  border-radius: 6px;
+  font-size: 13px;
+  pointer-events: none;
+}

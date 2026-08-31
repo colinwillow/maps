@@ -1,0 +1,63 @@
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import maplibregl from 'maplibre-gl';
+import 'maplibre-gl/dist/maplibre-gl.css';
+import { MapContext } from './MapContext';
+import { LayerRegistry } from '../layers/registry';
+import { basemapLayer } from '../layers/basemap';
+
+export const PORTLAND = { lng: -122.6784, lat: 45.5152 };
+
+const MAPTILER_KEY: string | undefined =
+  import.meta.env.VITE_MAPTILER_KEY || undefined;
+
+declare global {
+  interface Window {
+    /** Test hook: the live map, for the headless smoke test. */
+    __map?: maplibregl.Map;
+    __mapReady?: boolean;
+  }
+}
+
+export function MapView({ children }: { children?: ReactNode }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [map, setMap] = useState<maplibregl.Map | null>(null);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const map = new maplibregl.Map({
+      container,
+      center: PORTLAND,
+      zoom: 12,
+      attributionControl: { compact: false },
+      // No style here — the basemap layer module owns it.
+      style: { version: 8, sources: {}, layers: [] },
+    });
+    map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }));
+
+    const registry = new LayerRegistry();
+    registry.register(basemapLayer(MAPTILER_KEY));
+    registry.bind(map);
+
+    map.on('load', () => {
+      window.__mapReady = true;
+    });
+    window.__map = map;
+    setMap(map);
+
+    return () => {
+      window.__map = undefined;
+      window.__mapReady = false;
+      setMap(null);
+      registry.unbind();
+      map.remove();
+    };
+  }, []);
+
+  return (
+    <div ref={containerRef} className="map-container">
+      <MapContext.Provider value={map}>{children}</MapContext.Provider>
+    </div>
+  );
+}
