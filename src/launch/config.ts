@@ -54,11 +54,18 @@ export const SCENE = {
   titleSoft: '#9FB0C9',
 } as const;
 
-/** Placeholder wordmark — the project has no name yet. Change it here. */
+/**
+ * The wordmark on the launch screen.
+ *
+ * It sits over the whole planet, so it cannot be the name of one city — the
+ * globe is the world and the title has to say so. Still a placeholder: the
+ * project has no name. Others tried: ATLAS, TERRA, EVERYWHERE, BLUE MARBLE.
+ * Change it here.
+ */
 export const TITLE = {
-  text: 'PORTLAND',
-  subtitle: 'an open map of the city',
-  cta: 'Explore Portland',
+  text: 'OVERWORLD',
+  subtitle: 'an open map of everywhere',
+  cta: 'Jump to Portland',
 } as const;
 
 export type OrbiterKind = 'satellite' | 'ufo' | 'plane' | 'cloud';

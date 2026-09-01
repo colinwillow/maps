@@ -4,6 +4,7 @@ import { MapView } from './map/MapView';
 import { usingFallbackStyle } from './layers/basemap';
 import { LaunchScene } from './launch/LaunchScene';
 import { CharacterUI } from './layers/character/CharacterUI';
+import { PlacesUI } from './layers/places/PlacesUI';
 
 const MAPTILER_KEY: string | undefined =
   import.meta.env.VITE_MAPTILER_KEY || undefined;
@@ -26,6 +27,7 @@ export function App() {
     <div className="app">
       <MapView />
       <LaunchScene map={map} />
+      <PlacesUI map={map} />
       <CharacterUI map={map} />
       {usingFallbackStyle(MAPTILER_KEY) && (
         <div className="fallback-notice">

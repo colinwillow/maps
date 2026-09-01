@@ -58,6 +58,13 @@ projection; `style.ts` assembles the MapLibre style from them and contains no
 colour or font literal of its own (a test fails the build if one appears). A
 palette change is one edit.
 
+At world zoom the map has to read as EARTH, which is a different problem from
+reading as a city: paper-coloured land against a muted sea is a pale glowing
+ball from orbit. So the palette RAMPS by zoom — deep ocean, warmer land, a
+coastline heavy enough to see from space, country borders, and polar ice, all
+easing into the city palette by about zoom 6. Two white caps are the single
+strongest cue that a sphere is the Earth and they cost one layer.
+
 The idea: the basemap is the stage, not the show, because cartoony 3D models
 and artist studios land on top of it later and have to pop. So it is warm
 paper, sage green-space washes, and warm ink road lines — deliberately not the
@@ -158,6 +165,37 @@ the way it does: `Box3.setFromObject` lies about skinned meshes, and
 Colin walks on a flat plane at sea level: there is no collision, no ground
 height, and nothing stops him strolling across the Willamette. Buildings
 (Phase 4/5) come before that matters.
+
+## Clicking your way down the world
+
+`src/layers/places/`. World, then continent, country, region, city. The first
+tap SELECTS — the area lights up, the camera does not move — and a second tap
+on the same place ENTERS it. One tap that both highlights and flies gives you
+no chance to look before you leap.
+
+`places.ts` is hand-written data, and deliberately so: highlighting a continent
+needs POLYGONS, and OpenMapTiles ships administrative boundaries as lines, so
+there is nothing in the basemap to fill. The usual source is Natural Earth,
+which is a real dependency to vendor. Instead each place carries a bounding
+box, the highlight is that box, and the shape of the feature is settled;
+swapping boxes for real polygons later touches that one file.
+
+It is a SEED, not an atlas. One path goes all the way down — North America,
+United States, Oregon, Portland — and everything else stops at country level.
+Filling it in is data entry, not code.
+
+The layers stop at `PLACE_MAXZOOM` (12), below where the character walks, so
+their dots cannot steal the taps that mean "walk over there".
+
+### Two MapLibre traps this cost
+
+- **`setStyle` destroys every source and layer you added**, and calling it
+  while a style is still loading makes MapLibre rebuild from scratch, which
+  also throws away anything added in the gap. So place layers re-attach on
+  every `styledata`, and `attach()` is idempotent.
+- **`isStyleLoaded()` returns false even when the map is loaded and drawing.**
+  Guarding the attach on it meant the layers were never added at all, silently.
+  Don't gate on it; attach, and retry on the next `styledata` if it throws.
 
 ## Architecture: the layer seam
 

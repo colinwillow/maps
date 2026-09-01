@@ -218,3 +218,77 @@ body,
   transition: opacity 140ms linear;
   pointer-events: none;
 }
+
+/* ── place navigation ──────────────────────────────────────────────────────
+   The breadcrumb persists once you have clicked into the world, since it is
+   the only thing that says where you are after the launch title has faded. */
+
+.places-hint {
+  position: absolute;
+  z-index: 3;
+  left: 50%;
+  transform: translateX(-50%);
+  top: 12px;
+  margin: 0;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(19, 26, 44, 0.72);
+  color: #cfd8e8;
+  font-size: 12px;
+  pointer-events: none;
+}
+
+.places-bar {
+  position: absolute;
+  z-index: 4;
+  left: 10px;
+  top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100% - 120px);
+  padding: 5px 10px 5px 5px;
+  border-radius: 999px;
+  background: rgba(19, 26, 44, 0.82);
+  color: #f6f2e9;
+  font-size: 13px;
+}
+
+.places-back {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.16);
+  color: #f6f2e9;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.places-back:hover { background: rgba(255, 255, 255, 0.28); }
+
+.places-trail {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.places-crumb {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: #9fb0c9;
+  cursor: pointer;
+}
+
+.places-crumb.current {
+  color: #f6f2e9;
+  font-weight: 600;
+  cursor: default;
+}
+
+.places-sep { color: #6b7a94; margin: 0 2px; }

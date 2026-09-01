@@ -26,6 +26,15 @@ export const PALETTE = {
   woodland: '#CBD6BC',
   grass: '#D6DEC6',
 
+  // At world zoom the map has to read as EARTH, which is a different problem
+  // from reading as a city. Land the colour of paper against a muted teal sea
+  // is a pale glowing ball from orbit; from space the eye wants deep ocean,
+  // warm land and white poles. These are the low-zoom ends of the ramps in
+  // style.ts, which cross-fade into the city palette by about zoom 6.
+  oceanWorld: '#3E6C82',
+  landWorld: '#DCCFB2',
+  ice: '#F4F2EC',
+
   // The river is the hero and the only place saturation is spent.
   water: '#6FA1AF',
   waterDeep: '#5C8D9B',

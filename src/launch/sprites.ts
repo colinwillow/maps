@@ -33,7 +33,7 @@ export function drawAtmosphere(ctx: Ctx, cx: number, cy: number, radius: number,
   const edge = radius / outer;
   g.addColorStop(0, rgba(color, 0));
   g.addColorStop(Math.max(0, edge - 0.03), rgba(color, 0));
-  g.addColorStop(edge, rgba(color, 0.55));
+  g.addColorStop(edge, rgba(color, 0.34));
   g.addColorStop(1, rgba(color, 0));
   ctx.fillStyle = g;
   ctx.beginPath();

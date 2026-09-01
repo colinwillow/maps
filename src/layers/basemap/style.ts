@@ -109,7 +109,17 @@ export function buildStyle(maptilerKey: string): StyleSpecification {
       },
     },
     layers: [
-      { id: 'ground', type: 'background', paint: { 'background-color': C.paper } },
+      // Land. Warmer and deeper at world zoom so continents read against the
+      // ocean, easing to paper by the time you are over a city.
+      {
+        id: 'ground',
+        type: 'background',
+        paint: {
+          'background-color': [
+            'interpolate', ['linear'], ['zoom'], 0, C.landWorld, 4, C.landWorld, 7, C.paper,
+          ],
+        },
+      },
 
       // ── green and landuse: washes, barely there ────────────────────────
       fillLayer('landcover-wood', 'landcover', C.woodland, {
@@ -129,15 +139,35 @@ export function buildStyle(maptilerKey: string): StyleSpecification {
       }),
 
       // ── the Willamette: the only saturated colour on the map ───────────
+      // Ice: Antarctica and Greenland. Two white caps are the single strongest
+      // cue that a sphere is the Earth, and they cost one layer.
+      fillLayer('landcover-ice', 'landcover', C.ice, {
+        filter: ['match', ['get', 'class'], ['ice', 'glacier'], true, false],
+        paint: { 'fill-color': C.ice, 'fill-opacity': 0.9 },
+      }),
+
       fillLayer('water', 'water', C.water, {
-        paint: { 'fill-color': ['match', ['get', 'class'], 'ocean', C.waterDeep, C.water] },
+        paint: {
+          'fill-color': [
+            'interpolate', ['linear'], ['zoom'],
+            0, ['match', ['get', 'class'], 'ocean', C.oceanWorld, C.oceanWorld],
+            4, ['match', ['get', 'class'], 'ocean', C.oceanWorld, C.water],
+            7, ['match', ['get', 'class'], 'ocean', C.waterDeep, C.water],
+          ],
+        },
       }),
       {
         id: 'water-shoreline',
         type: 'line',
         source: SRC,
         'source-layer': 'water',
-        paint: { 'line-color': C.waterEdge, 'line-width': widthRamp([[8, 0.4], [12, 0.9], [16, 1.6]]) },
+        paint: {
+          'line-color': C.waterEdge,
+          // Visible from world zoom: at 0.4px the coastline vanishes and the
+          // continents lose their edges, which is most of what makes a globe
+          // read as a planet rather than a blob.
+          'line-width': widthRamp([[0, 0.8], [4, 1.1], [8, 0.6], [12, 0.9], [16, 1.6]]),
+        },
       },
       {
         id: 'waterway',
@@ -206,7 +236,8 @@ export function buildStyle(maptilerKey: string): StyleSpecification {
         filter: ['<=', ['get', 'admin_level'], 6] as never,
         paint: {
           'line-color': C.boundary,
-          'line-width': widthRamp([[4, 0.5], [10, 1.4]]),
+          'line-width': widthRamp([[0, 0.5], [3, 0.8], [6, 0.9], [10, 1.4]]),
+          'line-opacity': ['interpolate', ['linear'], ['zoom'], 0, 0.75, 6, 0.55],
           'line-dasharray': [4, 3],
         },
       },
