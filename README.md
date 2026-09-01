@@ -112,6 +112,53 @@ Objects are flat vector shapes on a 2D canvas rather than models. They read at
 reserved for Phase 5's hero buildings inside the map's own GL context, where a
 second WebGL renderer would fight it for state.
 
+## Walking around: Three.js inside MapLibre
+
+`src/layers/three/` (the integration) and `src/layers/character/` (Colin).
+Press **Walk around**; tap the map to send him somewhere, or use the thumb
+stick. **Street view** tilts to 78 degrees and swings the camera in behind him.
+
+The model is `colin_slim.glb`, copied from the `glorp` repo into `public/models/`
+— 36 clips, of which this uses `idle_neutral_00`, `walk_fwd_normal` and
+`run_fwd`. It is loaded ONLY when the button is pressed: 5MB has no business
+downloading for someone who wants to look at a map.
+
+### What was measured, because the docs and the folklore both mislead
+
+`tests/three.mjs` checks the integration against RENDERED PIXELS — a cube of
+known size on a known corner, found in the framebuffer and compared with what
+MapLibre itself says. A test that re-derived the same matrix maths would agree
+with itself and prove nothing.
+
+- **Use `defaultProjectionData.mainMatrix`, with normalised 0..1 mercator.**
+  `modelViewProjectionMatrix` is also correct but wants mercator scaled by
+  `worldSize` (512 * 2^zoom); feed it 0..1 and you miss by ten million. The
+  Mapbox-era snippets that pass `matrix` correspond to `mainMatrix`.
+- **Skip rendering while the globe is round.** `projectionTransition` is 0 once
+  MapLibre has blended to mercator and 1 at world view. These matrices only
+  describe the mercator plane: measured hundreds of pixels off at z10, exact
+  from z14 in.
+- **Metres per pixel is `40075017*cos(lat)/(512*2^zoom)`.** The constant
+  everyone quotes, 156543.034, is for 256px tiles; MapLibre uses 512px ones, so
+  it reports everything at twice its real size and made a correct renderer look
+  2x wrong.
+- **Camera zoom is chosen by how big HE is.** At z17.5 a 1.8m person is nine
+  pixels tall — geometrically right and useless. Street view sits at z21.5.
+- **One follower owns the whole camera.** A per-frame `jumpTo` silently cancels
+  an in-flight `easeTo`, so mode changes set targets rather than animating; that
+  bug stopped street view from ever tilting.
+
+The two GLB traps from Big Don apply here too and are why `loadColin.ts` looks
+the way it does: `Box3.setFromObject` lies about skinned meshes, and
+`updateWorldMatrix` is not `updateMatrixWorld`. The height check in
+`tests/three.mjs` catches both — they fail by orders of magnitude, not inches.
+
+### Still to do
+
+Colin walks on a flat plane at sea level: there is no collision, no ground
+height, and nothing stops him strolling across the Willamette. Buildings
+(Phase 4/5) come before that matters.
+
 ## Architecture: the layer seam
 
 Everything this platform will grow — basemap, buildings, routes, every pin

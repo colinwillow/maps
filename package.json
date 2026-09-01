@@ -7,18 +7,21 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "test": "npm run test:unit && npm run test:smoke",
+    "test": "npm run test:unit && npm run test:smoke && npm run test:three",
     "test:unit": "vitest run",
-    "test:smoke": "node tests/smoke.mjs"
+    "test:smoke": "node tests/smoke.mjs",
+    "test:three": "node tests/three.mjs"
   },
   "dependencies": {
     "maplibre-gl": "^5.6.0",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "three": "^0.171.0"
   },
   "devDependencies": {
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
+    "@types/three": "^0.171.0",
     "@vitejs/plugin-react": "^4.5.0",
     "playwright-core": "^1.52.0",
     "typescript": "^5.8.0",

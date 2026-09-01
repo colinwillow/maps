@@ -3,6 +3,7 @@ import type maplibregl from 'maplibre-gl';
 import { MapView } from './map/MapView';
 import { usingFallbackStyle } from './layers/basemap';
 import { LaunchScene } from './launch/LaunchScene';
+import { CharacterUI } from './layers/character/CharacterUI';
 
 const MAPTILER_KEY: string | undefined =
   import.meta.env.VITE_MAPTILER_KEY || undefined;
@@ -25,6 +26,7 @@ export function App() {
     <div className="app">
       <MapView />
       <LaunchScene map={map} />
+      <CharacterUI map={map} />
       {usingFallbackStyle(MAPTILER_KEY) && (
         <div className="fallback-notice">
           No VITE_MAPTILER_KEY set — running on the offline fallback style.

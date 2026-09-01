@@ -134,3 +134,87 @@ body,
   bottom: max(24vh, 150px);
   z-index: 3;
 }
+
+/* ── walking around ────────────────────────────────────────────────────────
+   The character HUD sits above the map but the stick pad only claims the
+   lower-left corner, so the rest of the map still takes taps for waypoints. */
+
+.char-enter,
+.char-btn {
+  font: inherit;
+  font-weight: 600;
+  padding: 9px 16px;
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.94);
+  color: #2b2419;
+  box-shadow: 0 3px 14px rgba(20, 16, 10, 0.28);
+}
+
+.char-enter {
+  position: absolute;
+  z-index: 4;
+  right: 12px;
+  bottom: 30px;
+}
+
+.char-hud {
+  position: absolute;
+  z-index: 4;
+  right: 12px;
+  bottom: 30px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.char-loading {
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(40, 36, 30, 0.85);
+  color: #f2ede4;
+  font-size: 12px;
+}
+
+.char-hint {
+  position: absolute;
+  z-index: 4;
+  left: 50%;
+  transform: translateX(-50%);
+  top: 12px;
+  margin: 0;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(40, 36, 30, 0.8);
+  color: #f2ede4;
+  font-size: 12px;
+  pointer-events: none;
+}
+
+.stick-pad {
+  position: absolute;
+  z-index: 4;
+  bottom: 0;
+  width: 45%;
+  max-width: 240px;
+  height: 40%;
+  max-height: 260px;
+  touch-action: none;
+}
+
+.stick-left { left: 0; }
+.stick-right { right: 0; }
+
+.stick-knob {
+  position: absolute;
+  width: 62px;
+  height: 62px;
+  margin: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.28);
+  border: 2px solid rgba(255, 255, 255, 0.7);
+  opacity: 0;
+  transition: opacity 140ms linear;
+  pointer-events: none;
+}
