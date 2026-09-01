@@ -177,15 +177,47 @@ export function buildStyle(maptilerKey: string): StyleSpecification {
         paint: { 'line-color': C.water, 'line-width': widthRamp([[9, 0.6], [14, 2], [18, 5]]) },
       },
 
-      // ── buildings: flat fills; Phase 4 extrudes these ──────────────────
+      // ── buildings ───────────────────────────────────────────────────────
+      // Flat footprints at mid zoom, real extrusions once you are close
+      // enough for them to mean anything. The extrusions fade in as the
+      // footprints fade out, so there is no zoom where the city pops.
       fillLayer('building', 'building', C.building, {
         minzoom: 13,
+        maxzoom: 16,
         paint: {
           'fill-color': C.building,
           'fill-outline-color': C.buildingEdge,
-          'fill-opacity': ['interpolate', ['linear'], ['zoom'], 13, 0, 14.5, 0.9],
+          'fill-opacity': ['interpolate', ['linear'], ['zoom'], 13, 0, 14.5, 0.9, 15.5, 0],
         },
       }),
+      {
+        // Phase 4: OSM footprints extruded with MapLibre's own layer type, no
+        // Three.js. The OpenMapTiles schema carries render_height and
+        // render_min_height on the building layer, which is the whole reason
+        // this costs one layer rather than a data pipeline. render_min_height
+        // matters: without it, anything mapped as a part sitting on top of
+        // something else grows from the ground and buildings grow spikes.
+        id: 'building-3d',
+        type: 'fill-extrusion',
+        source: SRC,
+        'source-layer': 'building',
+        minzoom: 14,
+        paint: {
+          'fill-extrusion-color': [
+            'interpolate', ['linear'], ['coalesce', ['get', 'render_height'], 0],
+            0, C.buildingRoof,
+            25, C.buildingRoof,
+            80, C.buildingTall,
+          ],
+          'fill-extrusion-height': ['coalesce', ['get', 'render_height'], 3],
+          'fill-extrusion-base': ['coalesce', ['get', 'render_min_height'], 0],
+          // Fades in over the same range the flat fill fades out.
+          'fill-extrusion-opacity': ['interpolate', ['linear'], ['zoom'], 14, 0, 15.5, 0.92],
+          // Shades the walls darker than the roof, which is what gives the
+          // massing form without a light rig.
+          'fill-extrusion-vertical-gradient': true,
+        },
+      } as LayerSpecification,
 
       // ── roads: warm ink lines, casings only where they earn their keep ──
       roadLayer('road-path', [

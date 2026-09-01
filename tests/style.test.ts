@@ -92,6 +92,53 @@ describe('field guide Portland style', () => {
   });
 });
 
+describe('extruded buildings', () => {
+  const layer = style.layers.find((l) => l.id === 'building-3d') as
+    | (import('maplibre-gl').FillExtrusionLayerSpecification)
+    | undefined;
+
+  it('exists, and is a real extrusion rather than a flat fill', () => {
+    expect(layer).toBeDefined();
+    expect(layer!.type).toBe('fill-extrusion');
+  });
+
+  it('takes its height from the tile data, not a constant', () => {
+    expect(JSON.stringify(layer!.paint!['fill-extrusion-height'])).toContain('render_height');
+  });
+
+  // Without render_min_height, anything mapped as a part sitting on top of
+  // something else is extruded from the ground instead, and buildings grow
+  // spikes. Pinning the base is the difference between a skyline and a bug.
+  it('starts from render_min_height, so roof parts do not grow spikes', () => {
+    expect(JSON.stringify(layer!.paint!['fill-extrusion-base'])).toContain('render_min_height');
+  });
+
+  it('never draws while the globe is still round', () => {
+    // The 3D layers only make sense on the mercator plane; MapLibre has
+    // finished blending out of globe well before this zoom.
+    expect(layer!.minzoom).toBeGreaterThanOrEqual(12);
+  });
+
+  it('is drawn above the flat footprints and below every label', () => {
+    const flat = ids.indexOf('building');
+    const extruded = ids.indexOf('building-3d');
+    const firstLabel = Math.min(
+      ...style.layers.filter((l) => l.type === 'symbol').map((l) => ids.indexOf(l.id)),
+    );
+    expect(extruded).toBeGreaterThan(flat);
+    expect(extruded).toBeLessThan(firstLabel);
+  });
+
+  it('hands over from the flat fill rather than doubling up on it', () => {
+    const flat = style.layers.find((l) => l.id === 'building') as
+      | import('maplibre-gl').FillLayerSpecification
+      | undefined;
+    // The footprints stop being drawn at the zoom the extrusions take over.
+    expect(flat!.maxzoom).toBeDefined();
+    expect(flat!.maxzoom!).toBeGreaterThan(layer!.minzoom!);
+  });
+});
+
 describe('token discipline', () => {
   // A palette change must be one edit in tokens.ts, not forty across style.ts.
   const src = readFileSync(new URL('../src/layers/basemap/style.ts', import.meta.url), 'utf8');

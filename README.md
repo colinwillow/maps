@@ -72,6 +72,13 @@ two clichés the brief calls out (night-mode road contrast in day mode, and
 desaturated grey with one accent colour). There are no yellow or orange road
 fills anywhere.
 
+Buildings are extruded with MapLibre's own `fill-extrusion` layer and no
+Three.js, which is Phase 4 and costs a single layer: the OpenMapTiles schema
+already carries `render_height` and `render_min_height` on the building layer.
+The base matters as much as the height — extrude everything from the ground and
+anything mapped as a roof part grows a spike. Flat footprints fade out as the
+extrusions fade in, so there is no zoom where the city pops.
+
 Saturation is spent in exactly one place: the Willamette. The river gets the
 only strong colour and a darker shoreline casing, and the bridges are pulled
 out of the road layers by `brunnel` and drawn as the heaviest ink on the map,

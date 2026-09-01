@@ -52,6 +52,14 @@ export const PALETTE = {
 
   building: '#E3DACA',
   buildingEdge: '#D3C8B3',
+  /**
+   * Extruded buildings. Roof lighter than wall so the massing reads without a
+   * shadow pass; taller blocks shift very slightly cooler, which separates
+   * downtown towers from low-rise without colouring them in.
+   */
+  buildingRoof: '#EAE1D0',
+  buildingWall: '#D6CBB6',
+  buildingTall: '#CFC7B8',
 
   boundary: '#B6A992',
 

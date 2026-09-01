@@ -256,6 +256,7 @@ try {
           bridgeAboveWater:
             layers.findIndex((l) => l.id === 'bridge') > layers.findIndex((l) => l.id === 'water'),
           named: map.getStyle().name,
+          extrusions: layers.filter((l) => l.type === 'fill-extrusion').length,
         });
       });
       map.setStyle(buildStyle('SMOKEKEY'));
@@ -267,6 +268,8 @@ try {
     String(styleCheck.projection));
   check('bridges still sit above water once MapLibre has built the style',
     styleCheck.bridgeAboveWater === true);
+  check('MapLibre builds the extruded buildings', styleCheck.extrusions === 1,
+    `${styleCheck.extrusions} fill-extrusion layers`);
 } finally {
   await browser.close();
   await server.close();
