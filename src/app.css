@@ -41,3 +41,96 @@ body,
   font-size: 13px;
   pointer-events: none;
 }
+
+/* ── the launch scene ──────────────────────────────────────────────────────
+   Stacking, and why: MapLibre under globe projection paints only the sphere
+   and leaves the rest of the canvas transparent, so a backdrop placed BEHIND
+   the map shows through as space. Order is backdrop (0) → map (1) → orbiting
+   things (2) → UI (3). Everything but the UI ignores the pointer, so the
+   globe underneath still drags and pinches normally. */
+
+.space-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(120% 90% at 50% 42%, #1b2540 0%, #131a2c 42%, #080b14 100%);
+  transition: opacity 220ms linear;
+}
+
+.map-container {
+  z-index: 1;
+  background: transparent;
+}
+
+.orbit-canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.launch-ui {
+  position: absolute;
+  z-index: 3;
+  left: 0;
+  right: 0;
+  bottom: max(6vh, 34px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+  transition: opacity 220ms linear;
+}
+
+.launch-title {
+  margin: 0;
+  font-size: clamp(30px, 8vw, 62px);
+  font-weight: 800;
+  letter-spacing: 0.22em;
+  /* the letter-spacing pushes the block right; pull it back so it reads centred */
+  text-indent: 0.22em;
+  color: #f6f2e9;
+  text-shadow: 0 2px 22px rgba(8, 11, 20, 0.75);
+}
+
+.launch-sub {
+  margin: 0;
+  font-size: clamp(12px, 3.2vw, 15px);
+  letter-spacing: 0.06em;
+  color: #9fb0c9;
+}
+
+.launch-cta {
+  margin-top: 10px;
+  padding: 11px 22px;
+  font: inherit;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: #131a2c;
+  background: #f6f2e9;
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  box-shadow: 0 6px 26px rgba(8, 11, 20, 0.5);
+  transition: transform 120ms ease, background 120ms ease;
+}
+
+.launch-cta:hover {
+  transform: translateY(-1px);
+  background: #ffffff;
+}
+
+.launch-cta:active {
+  transform: translateY(1px);
+}
+
+/* The keyless dev notice would sit on top of the title; lift it clear. */
+.fallback-notice {
+  bottom: max(24vh, 150px);
+  z-index: 3;
+}

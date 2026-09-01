@@ -80,6 +80,38 @@ custom layer; MapLibre blends globe back to mercator as you zoom in, so street
 level is flat either way and the globe only shows at world zoom. Flip that one
 word to go back.
 
+## The launch scene
+
+`src/launch/`. The page opens on the globe in space — slow eastward spin, a few
+stylised things in orbit, two distant planets, a title and a way into the city.
+`config.ts` holds every colour, speed, orbit and the wordmark.
+
+It is NOT a `MapFeatureLayer`. Layers own MapLibre sources and geolocated data;
+this owns none — it is chrome drawn over and under the map, so making it a
+layer would have meant a layer that adds no source, which muddies the contract
+the whole platform leans on.
+
+Three things it is worth knowing before changing it:
+
+- **It only works because the globe leaves the canvas transparent.** Under
+  globe projection MapLibre paints the sphere and nothing else, so a backdrop
+  placed *behind* the map shows through as space. Stacking is backdrop → map →
+  orbit canvas → UI.
+- **The globe's size is measured, not calculated.** See `globeMetrics.ts`; the
+  obvious formula is wrong because the sphere is drawn under a perspective
+  camera. The launch zoom is then *fitted* per device, because the silhouette
+  depends on viewport height as well as zoom — one fixed zoom gives a tidy
+  globe on a laptop and one bleeding off both edges of a phone.
+- **Occlusion is faked, and the rule is fussier than it looks.** There is no
+  depth buffer, so an orbiter is hidden when it is on the far side AND inside
+  the globe's silhouette. Hiding on far-side alone blinks things out while they
+  are still clearly beside the planet.
+
+Objects are flat vector shapes on a 2D canvas rather than models. They read at
+20px on a phone, cost nothing, and need no asset pipeline; Three.js stays
+reserved for Phase 5's hero buildings inside the map's own GL context, where a
+second WebGL renderer would fight it for state.
+
 ## Architecture: the layer seam
 
 Everything this platform will grow — basemap, buildings, routes, every pin

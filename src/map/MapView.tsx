@@ -4,6 +4,8 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import { MapContext } from './MapContext';
 import { LayerRegistry } from '../layers/registry';
 import { basemapLayer } from '../layers/basemap';
+import { useGlobeSpin } from '../launch/useGlobeSpin';
+import { LAUNCH } from '../launch/config';
 
 export const PORTLAND = { lng: -122.6784, lat: 45.5152 };
 
@@ -29,7 +31,9 @@ export function MapView({ children }: { children?: ReactNode }) {
     const map = new maplibregl.Map({
       container,
       center: PORTLAND,
-      zoom: 12,
+      // Opens on the globe, not on the city: the launch scene is the front
+      // door. LaunchScene's "Explore Portland" flies down to LAUNCH.cityZoom.
+      zoom: LAUNCH.zoom,
       attributionControl: { compact: false },
       // No style here — the basemap layer module owns it.
       style: { version: 8, sources: {}, layers: [] },
@@ -54,6 +58,8 @@ export function MapView({ children }: { children?: ReactNode }) {
       map.remove();
     };
   }, []);
+
+  useGlobeSpin(map);
 
   return (
     <div ref={containerRef} className="map-container">
