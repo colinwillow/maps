@@ -105,22 +105,63 @@ try {
   const z1 = await page.evaluate(() => window.__map.getZoom());
   check('wheel up zooms in', z1 > z0 + 0.05, `${z0.toFixed(2)} -> ${z1.toFixed(2)}`);
 
-  // ── tilt and rotate take, and mercator stays pinned ───────────────────────
-  const view = await page.evaluate(() => {
+  // ── tilt and rotate take, and the projection stays pinned ─────────────────
+  // The projection is a TOKEN (tokens.ts), not a constant of this test: the
+  // brief originally pinned mercator and it is now globe. So assert the live
+  // map agrees with the token rather than hard-coding either value — this
+  // still fails if the style.load pinning in basemap/index.ts stops working,
+  // which is the bug worth catching.
+  const view = await page.evaluate(async () => {
+    const { PROJECTION } = await import('/src/layers/basemap/tokens.ts');
     const map = window.__map;
     map.jumpTo({ pitch: 55, bearing: 30 });
     return {
       pitch: map.getPitch(),
       bearing: map.getBearing(),
       projection: map.getProjection()?.type,
+      expected: PROJECTION,
     };
   });
   check('pitch applies', Math.abs(view.pitch - 55) < 1e-6, `pitch=${view.pitch}`);
   check('rotate applies', Math.abs(view.bearing - 30) < 1e-6, `bearing=${view.bearing}`);
-  check('projection is pinned to mercator', view.projection === 'mercator', String(view.projection));
+  check('projection matches the token', view.projection === view.expected,
+    `live=${view.projection} token=${view.expected}`);
 
   await page.waitForTimeout(300);
   check('no console or page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
+
+  // ── the real cartography, loaded into a real MapLibre ─────────────────────
+  // The static style-spec validator runs in tests/style.test.ts. This is the
+  // other half: MapLibre itself must accept the style and build its layers,
+  // globe projection included. Tiles and glyphs cannot be fetched here (no
+  // network), so only the style document is under test — every error from
+  // this point on is an expected fetch failure and is no longer counted.
+  const styleCheck = await page.evaluate(async () => {
+    const { buildStyle } = await import('/src/layers/basemap/style.ts');
+    const map = window.__map;
+    return new Promise((resolve) => {
+      const t = setTimeout(() => resolve({ timedOut: true }), 20000);
+      map.once('style.load', () => {
+        clearTimeout(t);
+        resolve({
+          layers: map.getStyle().layers.length,
+          projection: map.getProjection()?.type,
+          bridgeAboveWater:
+            map.getStyle().layers.findIndex((l) => l.id === 'bridge') >
+            map.getStyle().layers.findIndex((l) => l.id === 'water'),
+          named: map.getStyle().name,
+        });
+      });
+      map.setStyle(buildStyle('SMOKEKEY'));
+    });
+  });
+
+  check('MapLibre accepts the custom style', !styleCheck.timedOut && styleCheck.layers > 15,
+    `${styleCheck.layers} layers, name=${styleCheck.named}`);
+  check('custom style renders on the globe', styleCheck.projection === 'globe',
+    String(styleCheck.projection));
+  check('bridges still sit above water once MapLibre has built the style',
+    styleCheck.bridgeAboveWater === true);
 } finally {
   await browser.close();
   await server.close();
