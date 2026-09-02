@@ -292,3 +292,8 @@ body,
 }
 
 .places-sep { color: #6b7a94; margin: 0 2px; }
+
+/* The launch UI is a full-width band; it must not eat taps aimed at the map.
+   Its button opts back in individually. */
+.launch-ui { pointer-events: none; }
+.launch-cta { pointer-events: auto; }

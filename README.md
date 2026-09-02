@@ -121,6 +121,15 @@ Three things it is worth knowing before changing it:
   the globe's silhouette. Hiding on far-side alone blinks things out while they
   are still clearly beside the planet.
 
+Cloud cover is drawn in the same canvas but placed in LNG/LAT rather than on
+screen, so the deck is projected like anything else and turns WITH the planet
+instead of sliding across it. Latitudes are sampled equal-area
+(`asin(uniform(-1,1))`); uniform-in-degrees packs clouds near the equator by
+area, and from a mid-latitude camera that whole band lands along the bottom rim
+with a bare pole above it. The limb is set well short of 90 degrees on purpose:
+foreshortening crowds clouds into a dense white ring at the true edge, which
+reads as a smear rather than weather.
+
 Objects are flat vector shapes on a 2D canvas rather than models. They read at
 20px on a phone, cost nothing, and need no asset pipeline; Three.js stays
 reserved for Phase 5's hero buildings inside the map's own GL context, where a

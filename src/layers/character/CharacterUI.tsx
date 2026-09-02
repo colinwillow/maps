@@ -3,6 +3,7 @@ import type maplibregl from 'maplibre-gl';
 import { characterLayer, type CharacterMode } from './index';
 import { Stick } from './Stick';
 import { PORTLAND } from '../../map/MapView';
+import { stopGlobeSpin } from '../../launch/config';
 
 const MODEL_URL = `${import.meta.env.BASE_URL}models/colin_slim.glb`;
 
@@ -21,6 +22,7 @@ export function CharacterUI({ map }: { map: maplibregl.Map | null }) {
 
   useEffect(() => {
     if (!map || !on) return;
+    stopGlobeSpin();
     const layer = characterLayer(PORTLAND, MODEL_URL);
     layerRef.current = layer;
     setLoading(true);

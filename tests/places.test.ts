@@ -131,3 +131,13 @@ describe('handing over to the character', () => {
     expect(PLACE_MAXZOOM).toBeLessThan(CAMERA.streetZoom);
   });
 });
+
+describe('tap targets', () => {
+  it('is forgiving enough for a thumb', async () => {
+    const { TAP_TOLERANCE_PX } = await import('../src/layers/places/index');
+    // A fingertip covers roughly 8-10 CSS px of slop on a phone; anything
+    // under that and a 6px dot is unhittable, which reads as "clicking does
+    // nothing" rather than "you missed".
+    expect(TAP_TOLERANCE_PX).toBeGreaterThanOrEqual(10);
+  });
+});

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type maplibregl from 'maplibre-gl';
-import { LAUNCH, SCENE, STARS, ORBITERS, TITLE } from './config';
+import { LAUNCH, SCENE, STARS, ORBITERS, TITLE, CLOUDS } from './config';
+import { makeClouds, angularDistance, placeCloud } from './clouds';
 import { placeOrbiter, inDrawOrder, sceneOpacity } from './orbits';
 import { globeScreenRadius, fitGlobeZoom, targetGlobeRadius } from './globeMetrics';
 import { drawOrbiter, drawPlanet, drawAtmosphere, FACES_TRAVEL } from './sprites';
@@ -58,6 +59,7 @@ export function LaunchScene({ map }: { map: maplibregl.Map | null }) {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    const clouds = makeClouds(CLOUDS.count);
     let stars: Star[] = [];
     let w = 0;
     let h = 0;
@@ -138,6 +140,32 @@ export function LaunchScene({ map }: { map: maplibregl.Map | null }) {
       drawPlanet(ctx, w * 0.86, h * 0.78, Math.max(11, radius * 0.11), SCENE.planetB, true);
       ctx.restore(); // end the hole — the glow and the orbiters may cross it
 
+      // ── cloud cover, ON the planet ────────────────────────────────────
+      // Clipped to the disc, and each cloud is projected from its own
+      // lng/lat, so the deck turns with the globe instead of sliding over it.
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius * 0.995, 0, Math.PI * 2);
+      ctx.clip();
+      const viewCentre = map.getCenter();
+      ctx.fillStyle = CLOUDS.colour;
+      for (const cloud of clouds) {
+        const lng = cloud.lng + t * CLOUDS.driftDegPerSec * cloud.drift;
+        const at = { lng: ((lng + 540) % 360) - 180, lat: cloud.lat };
+        const placed = placeCloud(angularDistance(viewCentre, at));
+        if (!placed.visible) continue;
+        const p = map.project(at);
+        if (!Number.isFinite(p.x) || Math.hypot(p.x - cx, p.y - cy) > radius) continue;
+        const size = cloud.size * radius * placed.scale;
+        ctx.globalAlpha = alpha * CLOUDS.opacity * placed.alpha;
+        for (const puff of cloud.puffs) {
+          ctx.beginPath();
+          ctx.arc(p.x + puff.dx * size, p.y + puff.dy * size, puff.r * size, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      ctx.restore();
+
       ctx.save();
       ctx.globalAlpha = alpha;
       drawAtmosphere(ctx, cx, cy, radius, SCENE.glow);
@@ -177,10 +205,18 @@ export function LaunchScene({ map }: { map: maplibregl.Map | null }) {
     <>
       <div className="space-backdrop" aria-hidden style={{ opacity }} />
       <canvas ref={canvasRef} className="orbit-canvas" aria-hidden />
-      <div className="launch-ui" style={{ opacity, pointerEvents: opacity < 0.3 ? 'none' : 'auto' }}>
+      {/* The container spans a band across the bottom of the screen, so it
+          must NOT take pointer events — it was swallowing taps meant for
+          places sitting in the lower half of the globe. Only the button
+          below opts back in. */}
+      <div className="launch-ui" style={{ opacity }}>
         <h1 className="launch-title">{TITLE.text}</h1>
         <p className="launch-sub">{TITLE.subtitle}</p>
-        <button className="launch-cta" onClick={flyToCity}>
+        <button
+          className="launch-cta"
+          style={{ pointerEvents: opacity < 0.3 ? 'none' : 'auto' }}
+          onClick={flyToCity}
+        >
           {TITLE.cta}
         </button>
       </div>

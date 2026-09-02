@@ -101,6 +101,18 @@ export async function loadColin(url: string, heightM = 1.8): Promise<LoadedChara
       }
       if ('metalness' in std) std.metalness = 0;
       if ('roughness' in std) std.roughness = 1;
+
+      // Force him opaque. This model came from a game where the head texture
+      // was authored at zero opacity so a second, blend-shape head could be
+      // swapped in behind it — which here just makes his head see-through.
+      // Nothing on this character is meant to be transparent, so the whole
+      // question is switched off rather than patched per-material.
+      std.transparent = false;
+      std.opacity = 1;
+      std.alphaTest = 0;
+      std.alphaMap = null;
+      std.depthWrite = true;
+      std.side = THREE.FrontSide;
       std.needsUpdate = true;
     }
   });

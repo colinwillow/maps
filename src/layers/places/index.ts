@@ -31,6 +31,9 @@ export const PLACE_STYLE = {
  */
 export const PLACE_MAXZOOM = 12;
 
+/** Half-width of the tap target around a place dot, in screen pixels. */
+export const TAP_TOLERANCE_PX = 14;
+
 const SRC = 'places';
 const HILITE = 'place-highlight';
 
@@ -132,7 +135,14 @@ export function placesLayer(opts: {
 
   const onClick = (e: maplibregl.MapMouseEvent) => {
     if (!map) return;
-    const hits = map.queryRenderedFeatures(e.point, { layers: ['place-dot', 'place-label'] });
+    // A thumb is not a pixel. Query a box around the tap rather than the
+    // exact point, or a 6px dot is essentially unhittable on a phone.
+    const t = TAP_TOLERANCE_PX;
+    const box: [[number, number], [number, number]] = [
+      [e.point.x - t, e.point.y - t],
+      [e.point.x + t, e.point.y + t],
+    ];
+    const hits = map.queryRenderedFeatures(box, { layers: ['place-dot', 'place-label'] });
     if (!hits.length) return;
     layer.onSelect?.(hits[0]);
   };

@@ -35,6 +35,10 @@ export function MapView({ children }: { children?: ReactNode }) {
       // door. LaunchScene's "Explore Portland" flies down to LAUNCH.cityZoom.
       zoom: LAUNCH.zoom,
       attributionControl: { compact: false },
+      // Past MapLibre's default 22 so the third-person camera can get close
+      // enough for the character to have presence. Vector tiles overzoom
+      // cleanly — the geometry stays sharp, it is only the data that runs out.
+      maxZoom: 24,
       // No style here — the basemap layer module owns it.
       style: { version: 8, sources: {}, layers: [] },
     });

@@ -15,14 +15,20 @@ export const CAMERA = {
    * 17px overhead and z21.5 near 100px in street view, which is the size a
    * third-person character needs to read as one.
    */
-  overheadZoom: 19,
+  overheadZoom: 19.5,
   /**
    * Street: near-horizontal, behind his shoulder. MapLibre's default ceiling
    * is 60 and it accepts up to 180, warning that past 60 is experimental.
    * 78 reads as standing on the pavement without the horizon breaking up.
    */
   streetPitch: 78,
-  streetZoom: 21.5,
+  /**
+   * Close enough to read as a third-person game rather than a map with a
+   * person on it. Metres per pixel is 40075017*cos(lat)/(512*2^zoom), so at
+   * z22.4 a 1.8m character stands about 160px tall — roughly a fifth of a
+   * phone screen, which is where third-person cameras usually sit.
+   */
+  streetZoom: 22.4,
   /** Seconds for the camera to catch up. Follows, never snaps. */
   followTau: 0.25,
   /** In street mode the camera swings behind him at this rate, deg/sec. */

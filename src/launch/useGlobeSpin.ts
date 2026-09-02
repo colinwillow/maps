@@ -24,6 +24,11 @@ export function useGlobeSpin(map: maplibregl.Map | null) {
     const stop = () => {
       stopped = true;
     };
+    // Anything that takes you off the globe view ends the spin for good:
+    // selecting a place, or stepping into the character. Without this the
+    // ground keeps sliding underfoot and the character looks like he is
+    // walking on a treadmill.
+    window.addEventListener('overworld:stopspin', stop);
     // Any real input ends it. 'movestart' alone would catch our own flyTo too.
     const events = ['mousedown', 'touchstart', 'wheel', 'keydown'] as const;
     const canvas = map.getCanvasContainer();
@@ -42,6 +47,7 @@ export function useGlobeSpin(map: maplibregl.Map | null) {
     return () => {
       cancelAnimationFrame(raf);
       for (const e of events) canvas.removeEventListener(e, stop);
+      window.removeEventListener('overworld:stopspin', stop);
     };
   }, [map]);
 }

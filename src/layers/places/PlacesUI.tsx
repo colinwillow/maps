@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type maplibregl from 'maplibre-gl';
 import { placesLayer } from './index';
+import { stopGlobeSpin } from '../../launch/config';
 import type { Place } from './places';
 
 /**
@@ -21,6 +22,8 @@ export function PlacesUI({ map }: { map: maplibregl.Map | null }) {
       onChange: (s) => {
         setPath(s.path);
         setSelected(s.selectedId);
+        // Picking somewhere means you are looking at it, not watching it turn.
+        if (s.selectedId || s.parentId) stopGlobeSpin();
       },
     });
     layerRef.current = layer;

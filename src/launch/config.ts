@@ -30,6 +30,10 @@ export const LAUNCH = {
   fadeTo: 4.6,
 } as const;
 
+/** Ends the idle spin from anywhere. See useGlobeSpin for why it is an event. */
+export const stopGlobeSpin = () =>
+  window.dispatchEvent(new Event('overworld:stopspin'));
+
 export const SCENE = {
   // Deep, slightly warm night — a cold blue would fight the paper basemap.
   spaceTop: '#131A2C',
@@ -97,6 +101,19 @@ export const ORBITERS: Orbiter[] = [
   { kind: 'cloud', radius: 1.04, period: 55, phase: 0.25, tilt: 0.42, size: 34 },
   { kind: 'cloud', radius: 1.05, period: -63, phase: 0.7, tilt: 0.2, size: 27 },
 ];
+
+/**
+ * Cloud cover. Most of what makes a photo of Earth read as Earth is white
+ * cloud over blue and brown, so this is a big part of the globe looking like
+ * the planet rather than a coloured ball.
+ */
+export const CLOUDS = {
+  count: 46,
+  /** Degrees of longitude per second, on top of the globe's own spin. */
+  driftDegPerSec: 0.12,
+  opacity: 0.55,
+  colour: '#FFFFFF',
+} as const;
 
 export const STARS = {
   count: 160,
