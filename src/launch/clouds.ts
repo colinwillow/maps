@@ -53,12 +53,16 @@ export function makeClouds(count: number, seed = 991): Cloud[] {
     return {
       lng: rand() * 360 - 180,
       lat,
-      size: 0.07 + rand() * 0.1,
+      // Small, and widely varied: a uniform size is what makes a deck look
+      // like polka dots rather than weather.
+      size: 0.022 + rand() * rand() * 0.075,
       drift: 0.6 + rand() * 0.8,
-      puffs: Array.from({ length: 3 + Math.floor(rand() * 3) }, () => ({
-        dx: (rand() - 0.5) * 1.7,
-        dy: (rand() - 0.5) * 0.7,
-        r: 0.35 + rand() * 0.4,
+      // Stretched along their own axis, because cloud systems are drawn out
+      // by wind rather than round.
+      puffs: Array.from({ length: 4 + Math.floor(rand() * 4) }, () => ({
+        dx: (rand() - 0.5) * 2.6,
+        dy: (rand() - 0.5) * 0.85,
+        r: 0.28 + rand() * 0.42,
       })),
     };
   });

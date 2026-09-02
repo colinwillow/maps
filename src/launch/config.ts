@@ -108,10 +108,12 @@ export const ORBITERS: Orbiter[] = [
  * the planet rather than a coloured ball.
  */
 export const CLOUDS = {
-  count: 46,
+  // Many small clouds, not a few big ones. A cloud deck seen from orbit is
+  // fine-grained; a handful of fat blobs reads as bubbles stuck to the glass.
+  count: 130,
   /** Degrees of longitude per second, on top of the globe's own spin. */
   driftDegPerSec: 0.12,
-  opacity: 0.55,
+  opacity: 0.42,
   /** How fast each puff breathes, so the deck forms and dissolves. */
   churn: 0.22,
   colour: '#FFFFFF',

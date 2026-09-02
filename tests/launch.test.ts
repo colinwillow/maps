@@ -191,7 +191,7 @@ describe('fitting the globe to the viewport', () => {
 
   it('is width-led on a tall phone and height-led on a wide screen', async () => {
     const { targetGlobeRadius } = await import('../src/launch/globeMetrics');
-    expect(targetGlobeRadius(390, 844)).toBeCloseTo(390 * 0.42, 6); // phone
-    expect(targetGlobeRadius(1400, 700)).toBeCloseTo(700 * 0.3, 6); // desktop
+    expect(targetGlobeRadius(390, 844)).toBeCloseTo(390 * 0.46, 6); // phone
+    expect(targetGlobeRadius(1400, 700)).toBeCloseTo(700 * 0.36, 6); // desktop
   });
 });

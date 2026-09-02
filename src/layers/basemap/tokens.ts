@@ -31,8 +31,8 @@ export const PALETTE = {
   // is a pale glowing ball from orbit; from space the eye wants deep ocean,
   // warm land and white poles. These are the low-zoom ends of the ramps in
   // style.ts, which cross-fade into the city palette by about zoom 6.
-  oceanWorld: '#3E6C82',
-  landWorld: '#DCCFB2',
+  oceanWorld: '#2C5B7C',
+  landWorld: '#D5C6A3',
   ice: '#F4F2EC',
 
   // The river is the hero and the only place saturation is spent.

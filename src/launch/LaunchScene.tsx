@@ -193,9 +193,26 @@ export function LaunchScene({ map }: { map: maplibregl.Map | null }) {
       const places = ORBITERS.map((o) => placeOrbiter(o, t, radius, cx, cy));
       for (const i of inDrawOrder(places)) {
         const p = places[i];
-        if (p.occluded) continue;
         const o = ORBITERS[i];
+        const drawnSize = o.size * p.scale;
+
+        // Fully swallowed by the planet: nothing to draw.
+        if (p.occluded && Math.hypot(p.x - cx, p.y - cy) < radius - drawnSize) continue;
+
         ctx.save();
+
+        // Going round the BACK: clip to everything outside the globe, so the
+        // craft slides behind the limb edge-first instead of vanishing whole.
+        // Skipping the draw outright — what this used to do — makes it pop out
+        // of existence the instant its centre crosses the silhouette, which
+        // is the one moment the illusion of going around has to hold.
+        if (p.depth < 0) {
+          ctx.beginPath();
+          ctx.rect(0, 0, w, h);
+          ctx.arc(cx, cy, radius, 0, Math.PI * 2, true);
+          ctx.clip();
+        }
+
         ctx.translate(p.x, p.y);
         if (FACES_TRAVEL[o.kind]) ctx.rotate(p.heading);
         ctx.scale(p.scale, p.scale);

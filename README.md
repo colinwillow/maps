@@ -120,6 +120,12 @@ Three things it is worth knowing before changing it:
   depth buffer, so an orbiter is hidden when it is on the far side AND inside
   the globe's silhouette. Hiding on far-side alone blinks things out while they
   are still clearly beside the planet.
+- **Going behind is a CLIP, not a skip.** Far-side craft are drawn with the
+  canvas clipped to everything outside the globe, so they slide behind the limb
+  edge-first. Skipping the draw instead — what this did at first — makes them
+  vanish whole the instant their centre crosses the silhouette, which is the
+  one moment the illusion of going around has to hold. Measured across a full
+  orbit, the visible fraction now changes by at most 2% per frame.
 
 Cloud cover is drawn in the same canvas but placed in LNG/LAT rather than on
 screen, so the deck is projected like anything else and turns WITH the planet

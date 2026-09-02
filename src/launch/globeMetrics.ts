@@ -99,4 +99,4 @@ export function fitGlobeZoom(
  * does not touch the edges, height-led on a wide screen so the title still has
  * somewhere to live.
  */
-export const targetGlobeRadius = (w: number, h: number) => Math.min(w * 0.42, h * 0.3);
+export const targetGlobeRadius = (w: number, h: number) => Math.min(w * 0.46, h * 0.36);
