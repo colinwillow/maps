@@ -141,6 +141,11 @@ export function LaunchScene({ map }: { map: maplibregl.Map | null }) {
       ctx.restore(); // end the hole — the glow and the orbiters may cross it
 
       // ── cloud cover, ON the planet ────────────────────────────────────
+      // __noClouds is a test hook. Clouds are the one thing allowed to paint
+      // over the globe, which would otherwise mask the check that nothing
+      // ELSE does — the starfield bleeding across the planet is a real bug
+      // that check exists to catch.
+      if (!window.__noClouds) {
       // Clipped to the disc, and each cloud is projected from its own
       // lng/lat, so the deck turns with the globe instead of sliding over it.
       ctx.save();
@@ -148,7 +153,6 @@ export function LaunchScene({ map }: { map: maplibregl.Map | null }) {
       ctx.arc(cx, cy, radius * 0.995, 0, Math.PI * 2);
       ctx.clip();
       const viewCentre = map.getCenter();
-      ctx.fillStyle = CLOUDS.colour;
       for (const cloud of clouds) {
         const lng = cloud.lng + t * CLOUDS.driftDegPerSec * cloud.drift;
         const at = { lng: ((lng + 540) % 360) - 180, lat: cloud.lat };
@@ -157,12 +161,27 @@ export function LaunchScene({ map }: { map: maplibregl.Map | null }) {
         const p = map.project(at);
         if (!Number.isFinite(p.x) || Math.hypot(p.x - cx, p.y - cy) > radius) continue;
         const size = cloud.size * radius * placed.scale;
-        ctx.globalAlpha = alpha * CLOUDS.opacity * placed.alpha;
-        for (const puff of cloud.puffs) {
+        const base = alpha * CLOUDS.opacity * placed.alpha;
+        for (const [i, puff] of cloud.puffs.entries()) {
+          // Each puff breathes on its own slow cycle, so the deck keeps
+          // forming and dissolving instead of sitting there as fixed blobs.
+          const breathe = 1 + 0.18 * Math.sin(t * CLOUDS.churn * cloud.drift + i * 1.9);
+          const r = puff.r * size * breathe;
+          const px = p.x + puff.dx * size;
+          const py = p.y + puff.dy * size;
+          // A soft radial falloff rather than a hard disc: flat circles read
+          // as painted dots, and it is the fuzzy edge that reads as vapour.
+          const g = ctx.createRadialGradient(px, py, r * 0.15, px, py, r);
+          g.addColorStop(0, `rgba(255,255,255,${base})`);
+          g.addColorStop(0.55, `rgba(255,255,255,${base * 0.72})`);
+          g.addColorStop(1, 'rgba(255,255,255,0)');
+          ctx.fillStyle = g;
+          ctx.globalAlpha = 1;
           ctx.beginPath();
-          ctx.arc(p.x + puff.dx * size, p.y + puff.dy * size, puff.r * size, 0, Math.PI * 2);
+          ctx.arc(px, py, r, 0, Math.PI * 2);
           ctx.fill();
         }
+      }
       }
       ctx.restore();
 

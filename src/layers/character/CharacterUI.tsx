@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type maplibregl from 'maplibre-gl';
 import { characterLayer, type CharacterMode } from './index';
 import { Stick } from './Stick';
+import { stickToWorld } from './input';
+import { setSatellite } from '../basemap/satellite';
 import { PORTLAND } from '../../map/MapView';
 import { stopGlobeSpin } from '../../launch/config';
 
@@ -18,6 +20,7 @@ export function CharacterUI({ map }: { map: maplibregl.Map | null }) {
   const [on, setOn] = useState(false);
   const [mode, setMode] = useState<CharacterMode>('overhead');
   const [loading, setLoading] = useState(false);
+  const [satellite, setSat] = useState(false);
   const layerRef = useRef<ReturnType<typeof characterLayer> | null>(null);
 
   useEffect(() => {
@@ -37,10 +40,15 @@ export function CharacterUI({ map }: { map: maplibregl.Map | null }) {
     };
   }, [map, on]);
 
-  const drive = useCallback((east: number, south: number) => {
-    const c = layerRef.current?.getCharacter();
-    if (c) c.input = { east, south };
-  }, []);
+  // The stick reports SCREEN offsets; the world direction depends on where
+  // the camera is looking, or "up" means north instead of "away from me".
+  const drive = useCallback(
+    (dx: number, dy: number) => {
+      const c = layerRef.current?.getCharacter();
+      if (c) c.input = stickToWorld(dx, dy, map?.getBearing() ?? 0);
+    },
+    [map],
+  );
 
   const toggleMode = () => {
     const next: CharacterMode = mode === 'overhead' ? 'street' : 'overhead';
@@ -59,6 +67,16 @@ export function CharacterUI({ map }: { map: maplibregl.Map | null }) {
   return (
     <>
       <div className="char-hud">
+        <button
+          className="char-btn"
+          onClick={() => {
+            if (!map) return;
+            const next = !satellite;
+            if (setSatellite(map, next)) setSat(next);
+          }}
+        >
+          {satellite ? 'Illustrated' : 'Satellite'}
+        </button>
         <button className="char-btn" onClick={toggleMode}>
           {mode === 'overhead' ? 'Street view' : 'Overhead'}
         </button>

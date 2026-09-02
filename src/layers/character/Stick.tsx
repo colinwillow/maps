@@ -50,7 +50,8 @@ export function Stick({
         dy = (dy / len) * RADIUS;
       }
       knob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
-      // Screen down is south, screen right is east.
+      // Raw SCREEN offsets. Turning them into a world direction needs the map
+      // bearing, which the stick has no business knowing — see stickToWorld.
       onChange(dx / RADIUS, dy / RADIUS);
     };
 

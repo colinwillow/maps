@@ -129,6 +129,10 @@ try {
   // this pins, and it is invisible to every other check here.
   const overPlanet = await page.evaluate(async () => {
     const { globeScreenRadius } = await import('/src/launch/globeMetrics.ts');
+    // Clouds are DELIBERATELY drawn on the planet, so switch them off for
+    // this sample; the point of the check is that nothing else is.
+    window.__noClouds = true;
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
     const cv = document.querySelector('.orbit-canvas');
     const ctx = cv.getContext('2d');
     const dpr = cv.width / cv.clientWidth;
@@ -143,9 +147,10 @@ try {
       total++;
       if (ctx.getImageData(x, y, 1, 1).data[3] > 8) opaque++;
     }
+    window.__noClouds = false;
     return { opaque, total };
   });
-  check('backdrop is not painted over the planet',
+  check('backdrop (stars, planets) is not painted over the globe',
     overPlanet.total > 24 && overPlanet.opaque <= 3,
     `${overPlanet.opaque}/${overPlanet.total} samples painted`);
 

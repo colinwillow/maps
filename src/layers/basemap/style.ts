@@ -93,6 +93,18 @@ const label = (
     ...Object.fromEntries(Object.entries(extra).filter(([k]) => k !== 'layout' && k !== 'paint')),
   }) as LayerSpecification;
 
+/**
+ * Layers hidden when satellite imagery is switched on, so the photograph is
+ * not buried under the illustrated ground it is meant to replace.
+ */
+export const LAND_FILL_LAYERS = [
+  'landcover-wood',
+  'landcover-grass',
+  'landcover-ice',
+  'landuse-urban',
+  'park',
+];
+
 export function buildStyle(maptilerKey: string): StyleSpecification {
   const key = encodeURIComponent(maptilerKey);
 
@@ -105,6 +117,15 @@ export function buildStyle(maptilerKey: string): StyleSpecification {
       [SRC]: {
         type: 'vector',
         url: `https://api.maptiler.com/tiles/v3/tiles.json?key=${key}`,
+        attribution: ATTRIBUTION,
+      },
+      // Real aerial imagery, off by default. Google's photogrammetry is not
+      // usable here — their terms require their own SDK and branding — but
+      // MapTiler serves satellite raster on the same key the vector tiles use.
+      satellite: {
+        type: 'raster',
+        url: `https://api.maptiler.com/tiles/satellite-v2/tiles.json?key=${key}`,
+        tileSize: 512,
         attribution: ATTRIBUTION,
       },
     },
@@ -120,6 +141,16 @@ export function buildStyle(maptilerKey: string): StyleSpecification {
           ],
         },
       },
+
+      {
+        // Hidden until asked for: 'none' means MapLibre never requests the
+        // tiles, so leaving it in the style costs nothing until it is on.
+        id: 'satellite',
+        type: 'raster',
+        source: 'satellite',
+        layout: { visibility: 'none' },
+        paint: { 'raster-opacity': 1 },
+      } as LayerSpecification,
 
       // ── green and landuse: washes, barely there ────────────────────────
       fillLayer('landcover-wood', 'landcover', C.woodland, {

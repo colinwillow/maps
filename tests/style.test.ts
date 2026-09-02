@@ -139,6 +139,38 @@ describe('extruded buildings', () => {
   });
 });
 
+describe('satellite ground', () => {
+  const sat = style.layers.find((l) => l.id === 'satellite');
+
+  it('is in the style but switched off', () => {
+    expect(sat).toBeDefined();
+    expect(sat!.type).toBe('raster');
+    // 'none' means MapLibre never requests the imagery tiles, so shipping the
+    // layer costs nothing until someone asks for it.
+    expect((sat as { layout?: { visibility?: string } }).layout?.visibility).toBe('none');
+  });
+
+  it('sits under the roads and labels, so the cartography survives', () => {
+    const satIdx = ids.indexOf('satellite');
+    expect(satIdx).toBeGreaterThan(ids.indexOf('ground'));
+    expect(satIdx).toBeLessThan(ids.indexOf('road-motorway'));
+    const firstLabel = Math.min(
+      ...style.layers.filter((l) => l.type === 'symbol').map((l) => ids.indexOf(l.id)),
+    );
+    expect(satIdx).toBeLessThan(firstLabel);
+  });
+
+  // The land fills would paint straight over the photograph they replace.
+  it('names every land fill that has to come off with it', async () => {
+    const { LAND_FILL_LAYERS } = await import('../src/layers/basemap/style');
+    for (const id of LAND_FILL_LAYERS) expect(ids).toContain(id);
+    const fills = style.layers
+      .filter((l) => l.type === 'fill' && !l.id.startsWith('place') && l.id !== 'water' && l.id !== 'building')
+      .map((l) => l.id);
+    for (const id of fills) expect(LAND_FILL_LAYERS).toContain(id);
+  });
+});
+
 describe('token discipline', () => {
   // A palette change must be one edit in tokens.ts, not forty across style.ts.
   const src = readFileSync(new URL('../src/layers/basemap/style.ts', import.meta.url), 'utf8');

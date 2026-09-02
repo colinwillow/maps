@@ -176,10 +176,27 @@ the way it does: `Box3.setFromObject` lies about skinned meshes, and
 `updateWorldMatrix` is not `updateMatrixWorld`. The height check in
 `tests/three.mjs` catches both — they fail by orders of magnitude, not inches.
 
+### Ground texture
+
+There is a **Satellite** button in the character HUD. It swaps the illustrated
+ground for MapTiler's aerial imagery on the same key the vector tiles use,
+keeping roads, buildings and labels on top — the hybrid, not a plain photo.
+The land fills have to be hidden with it or they paint over the photograph.
+
+Google's photogrammetry, the thing that makes nuclearsimulation.com look the
+way it does, is not available here: their terms require their own SDK and
+branding. That is a licensing wall, not a technical one.
+
 ### Still to do
 
 Colin walks on a flat plane at sea level: there is no collision, no ground
-height, and nothing stops him strolling across the Willamette. Buildings
+height, and nothing stops him strolling across the Willamette.
+
+Stick input is CAMERA-RELATIVE (`input.ts`), which is the one thing to keep in
+mind if you touch it. Mapping the stick straight to compass directions is the
+obvious thing and it is wrong: in street view the camera swings round behind
+the character, so "push up" walked him north whichever way he faced — sideways
+at best, backwards when he faced south. Up must mean away from the camera. Buildings
 (Phase 4/5) come before that matters.
 
 ## Clicking your way down the world

@@ -1,9 +1,13 @@
 import type maplibregl from 'maplibre-gl';
 import type { MapFeatureLayer } from '../types';
+import * as THREE from 'three';
 import { ThreeLayer } from '../three/ThreeLayer';
 import { loadColin } from './loadColin';
 import { Character } from './Character';
 import type { LngLat } from '../three/geo';
+
+/** Furthest a single tap may send him, in metres. */
+export const MAX_WAYPOINT_M = 400;
 
 export const CAMERA = {
   /** Overhead: looking down, character centred. */
@@ -46,6 +50,19 @@ export type CharacterMode = 'overhead' | 'street';
  */
 export function characterLayer(origin: LngLat, modelUrl: string) {
   const three = new ThreeLayer(origin, 'character-3d');
+
+  // A ring on the ground at the waypoint. Without it, tapping and watching him
+  // turn is guesswork — you cannot tell a wrong destination from a wrong
+  // direction, which is most of what makes movement feel broken.
+  const marker = new THREE.Mesh(
+    new THREE.RingGeometry(0.9, 1.25, 32),
+    new THREE.MeshBasicMaterial({ color: 0xe8a87c, transparent: true, opacity: 0.9, side: THREE.DoubleSide }),
+  );
+  marker.rotation.x = -Math.PI / 2;
+  marker.position.y = 0.06;
+  marker.visible = false;
+  three.scene.add(marker);
+
   let character: Character | null = null;
   let map: maplibregl.Map | null = null;
   let mode: CharacterMode = 'overhead';
@@ -54,6 +71,11 @@ export function characterLayer(origin: LngLat, modelUrl: string) {
   const onMapClick = (e: maplibregl.MapMouseEvent) => {
     if (!character) return;
     const { east, south } = three.frame.toMeters(e.lngLat);
+    // Reject absurd destinations. At a steep pitch a tap near the top of the
+    // screen unprojects to somewhere near the horizon, and sending him on a
+    // half-kilometre walk from a stray tap reads as the controls misfiring.
+    const away = Math.hypot(east - character.east, south - character.south);
+    if (away > MAX_WAYPOINT_M) return;
     character.waypoint = { east, south };
     three.requestRedraw();
   };
@@ -80,6 +102,12 @@ export function characterLayer(origin: LngLat, modelUrl: string) {
       three.setFrameCallback((dt) => {
         if (!character) return;
         character.update(dt);
+        if (character.waypoint) {
+          marker.position.set(character.waypoint.east, 0.06, character.waypoint.south);
+          marker.visible = true;
+        } else {
+          marker.visible = false;
+        }
         if (following && map) followCharacter(map, character, three.frame, mode, dt);
         // Keep frames coming while he moves OR while the camera is still
         // easing toward the mode's pitch/zoom, or a mode switch stalls part

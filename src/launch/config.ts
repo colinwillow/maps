@@ -112,6 +112,8 @@ export const CLOUDS = {
   /** Degrees of longitude per second, on top of the globe's own spin. */
   driftDegPerSec: 0.12,
   opacity: 0.55,
+  /** How fast each puff breathes, so the deck forms and dissolves. */
+  churn: 0.22,
   colour: '#FFFFFF',
 } as const;
 

@@ -17,6 +17,8 @@ declare global {
     /** Test hook: the live map, for the headless smoke test. */
     __map?: maplibregl.Map;
     __mapReady?: boolean;
+    /** Test hook: suppress the cloud deck so the globe's face is bare. */
+    __noClouds?: boolean;
   }
 }
 
