@@ -21,6 +21,7 @@ export function CharacterUI({ map }: { map: maplibregl.Map | null }) {
   const [mode, setMode] = useState<CharacterMode>('overhead');
   const [loading, setLoading] = useState(false);
   const [satellite, setSat] = useState(false);
+  const [fps, setFps] = useState(0);
   const layerRef = useRef<ReturnType<typeof characterLayer> | null>(null);
 
   useEffect(() => {
@@ -33,8 +34,12 @@ export function CharacterUI({ map }: { map: maplibregl.Map | null }) {
     layer.ready.then(() => {
       setLoading(false);
       layer.setMode('overhead');
+      // Test hook: drive him without synthesising touches, so the smoke test
+      // can measure the frame budget rather than the input layer.
+      window.__charMove = (east: number, south: number) => layer.setMove(east, south);
     });
     return () => {
+      window.__charMove = undefined;
       layer.detach(map);
       layerRef.current = null;
     };
@@ -44,11 +49,25 @@ export function CharacterUI({ map }: { map: maplibregl.Map | null }) {
   // the camera is looking, or "up" means north instead of "away from me".
   const drive = useCallback(
     (dx: number, dy: number) => {
-      const c = layerRef.current?.getCharacter();
-      if (c) c.input = stickToWorld(dx, dy, map?.getBearing() ?? 0);
+      const v = stickToWorld(dx, dy, map?.getBearing() ?? 0);
+      layerRef.current?.setMove(v.east, v.south);
     },
     [map],
   );
+
+  // Right thumb looks. Raw screen offsets — the camera owns what they mean.
+  const lookAround = useCallback((dx: number, dy: number) => {
+    layerRef.current?.setLook(dx, dy);
+  }, []);
+
+  // A frame counter, which the brief asks for from Phase 4 on. It reads 0 when
+  // nothing is moving, and that is correct rather than broken: the map only
+  // repaints while something changes, so standing still costs no frames at all.
+  useEffect(() => {
+    if (!on) return;
+    const t = setInterval(() => setFps(layerRef.current?.getFps() ?? 0), 400);
+    return () => clearInterval(t);
+  }, [on]);
 
   const toggleMode = () => {
     const next: CharacterMode = mode === 'overhead' ? 'street' : 'overhead';
@@ -85,8 +104,10 @@ export function CharacterUI({ map }: { map: maplibregl.Map | null }) {
         </button>
         {loading && <span className="char-loading">loading Colin…</span>}
       </div>
-      <p className="char-hint">Tap the map to send him there, or use the stick</p>
-      <Stick onChange={drive} />
+      <p className="char-hint">Left thumb walks · right thumb looks</p>
+      <span className="char-fps">{fps > 0 ? `${fps} fps` : 'idle'}</span>
+      <Stick onChange={drive} side="left" />
+      <Stick onChange={lookAround} side="right" />
     </>
   );
 }

@@ -152,21 +152,26 @@ body,
   box-shadow: 0 3px 14px rgba(20, 16, 10, 0.28);
 }
 
+/* The HUD lives at the TOP, clear of both thumb pads. It used to sit bottom
+   right, which the right stick's pad then covered completely — the buttons
+   were still there and simply could not be pressed. */
 .char-enter {
   position: absolute;
-  z-index: 4;
+  z-index: 5;
   right: 12px;
   bottom: 30px;
 }
 
 .char-hud {
   position: absolute;
-  z-index: 4;
+  z-index: 5;
   right: 12px;
-  bottom: 30px;
+  /* below MapLibre's own zoom/compass stack */
+  top: 112px;
   display: flex;
+  flex-direction: column;
+  align-items: flex-end;
   gap: 8px;
-  align-items: center;
 }
 
 .char-loading {
@@ -297,3 +302,21 @@ body,
    Its button opts back in individually. */
 .launch-ui { pointer-events: none; }
 .launch-cta { pointer-events: auto; }
+
+/* Frame counter. The brief asks for one from Phase 4 on, because the moment 3D
+   goes in performance dictates every later decision. */
+.char-fps {
+  position: absolute;
+  z-index: 5;
+  /* dead centre at the bottom: the one strip neither thumb pad claims */
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 14px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: rgba(19, 26, 44, 0.72);
+  color: #cfd8e8;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}

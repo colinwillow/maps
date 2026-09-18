@@ -51,7 +51,10 @@ describe('heading maths', () => {
   });
 });
 
-describe('walking to a waypoint', () => {
+// The character controller still *has* a waypoint mechanism — it is how any
+// future "walk to this pin" feature would work — but nothing in the UI sets
+// one any more: movement is twin-stick. These keep the mechanism honest.
+describe('the waypoint mechanism, now unused by the UI', () => {
   it('arrives, and stops', () => {
     const c = new Character(stubModel());
     c.waypoint = { east: 10, south: 0 };
@@ -126,5 +129,35 @@ describe('direct stick input', () => {
     c.input = { east: 0, south: 0 };
     step(c, 2);
     expect(c.speed).toBeLessThan(0.05);
+  });
+});
+
+describe('the camera, driven by the right thumb', () => {
+  it('pitches toward the horizon when the thumb pulls down', async () => {
+    const { targetPitch, CAMERA } = await import('../src/layers/character/index');
+    const level = targetPitch('street', { y: 0 });
+    const down = targetPitch('street', { y: -1 });
+    const up = targetPitch('street', { y: 1 });
+    expect(down).toBeGreaterThan(level);
+    expect(up).toBeLessThan(level);
+    expect(down).toBeLessThanOrEqual(CAMERA.maxPitch);
+  });
+
+  it('never tips past what MapLibre will draw sanely', async () => {
+    const { targetPitch, CAMERA } = await import('../src/layers/character/index');
+    for (const y of [-1, -0.5, 0, 0.5, 1]) {
+      for (const mode of ['street', 'overhead'] as const) {
+        const p = targetPitch(mode, { y });
+        expect(p).toBeGreaterThanOrEqual(0);
+        expect(p).toBeLessThanOrEqual(CAMERA.maxPitch);
+      }
+    }
+  });
+
+  it('keeps the look pitch under the map\'s own ceiling', async () => {
+    const { CAMERA } = await import('../src/layers/character/index');
+    // MapLibre is told 85; the camera must stay inside that or jumpTo clamps
+    // and the damping chases a target it can never reach.
+    expect(CAMERA.maxPitch).toBeLessThan(85);
   });
 });

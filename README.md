@@ -144,8 +144,10 @@ second WebGL renderer would fight it for state.
 ## Walking around: Three.js inside MapLibre
 
 `src/layers/three/` (the integration) and `src/layers/character/` (Colin).
-Press **Walk around**; tap the map to send him somewhere, or use the thumb
-stick. **Street view** tilts to 78 degrees and swings the camera in behind him.
+Press **Walk around**. **Left thumb walks, right thumb looks** — twin-stick,
+the way the other games in this account work. Tap-to-walk is deliberately gone:
+sending him to a pin is a MAP interaction, and keeping both made every tap on
+the map ambiguous.
 
 The model is `colin_slim.glb`, copied from the `glorp` repo into `public/models/`
 — 36 clips, of which this uses `idle_neutral_00`, `walk_fwd_normal` and
@@ -197,6 +199,33 @@ branding. That is a licensing wall, not a technical one.
 
 Colin walks on a flat plane at sea level: there is no collision, no ground
 height, and nothing stops him strolling across the Willamette.
+
+### The frame budget
+
+The brief asks for an FPS counter from Phase 4 on, and there is one at the
+bottom of the screen in character mode. It reads `idle` when nothing is moving,
+and that is correct rather than broken.
+
+**Standing still costs zero map repaints.** It did not used to: the follower
+called `map.jumpTo` every frame, and jumpTo schedules a repaint even when every
+value is identical — so the render triggered the follower, the follower
+triggered the next render, and the whole pitched city repainted forever while
+the character stood still. At 78 degrees MapLibre draws all the way to the
+horizon, so that was the most expensive thing in the app, running for nothing.
+Measured: 32 renders per 1.5s standing still before, 0 after.
+
+The other half of that is just as easy to break, and did break first time:
+once the loop parks itself, something has to WAKE it when a thumb moves. Move
+input goes through `layer.setMove` rather than being poked onto the character,
+precisely so it can. Setting `character.input` directly left the input sitting
+there with no frame to act on it and he never moved at all. `tests/smoke.mjs`
+pins all three states — idle, walking, and quiet again afterwards.
+
+The launch scene's draw loop also parks itself once faded out, rather than
+clearing a full-screen canvas at device pixel ratio for something nobody can
+see.
+
+### Input
 
 Stick input is CAMERA-RELATIVE (`input.ts`), which is the one thing to keep in
 mind if you touch it. Mapping the stick straight to compass directions is the

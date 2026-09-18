@@ -241,6 +241,56 @@ try {
   await page.waitForTimeout(300);
   check('no console or page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
 
+  // ── the frame budget while walking ────────────────────────────────────────
+  // Standing still must cost NOTHING. The follower used to call jumpTo every
+  // frame, and jumpTo schedules a repaint even when every value is identical,
+  // so the whole pitched city repainted forever while the character stood
+  // still. The other half of that fix is just as easy to break: once the loop
+  // parks itself, something has to WAKE it when a thumb moves, or the input
+  // sits there and he never moves at all.
+  const budget = await page.evaluate(async () => {
+    const map = window.__map;
+    const count = (ms) => new Promise((res) => {
+      let n = 0;
+      const tick = () => n++;
+      map.on('render', tick);
+      setTimeout(() => { map.off('render', tick); res(n); }, ms);
+    });
+    const enter = document.querySelector('.char-enter');
+    if (!enter) return { skipped: true };
+    enter.click();
+    await new Promise((r) => setTimeout(r, 12000));
+    if (document.querySelector('.char-loading')) return { skipped: true };
+
+    const streetBtn = [...document.querySelectorAll('.char-btn')]
+      .find((b) => b.textContent.trim() === 'Street view');
+    streetBtn?.click();
+    await new Promise((r) => setTimeout(r, 5000));
+
+    const idle = await count(1200);
+    // Drive him straight from the layer's own input path.
+    const before = map.getCenter();
+    window.__charMove?.(0, -1);
+    const walking = await count(1200);
+    window.__charMove?.(0, 0);
+    const after = map.getCenter();
+    await new Promise((r) => setTimeout(r, 2500));
+    const settled = await count(1200);
+    return {
+      idle, walking, settled,
+      moved: Math.hypot(after.lng - before.lng, after.lat - before.lat),
+    };
+  });
+
+  if (budget.skipped) {
+    check('character frame budget', false, 'character did not start');
+  } else {
+    check('standing still costs no map repaints', budget.idle === 0, `${budget.idle} renders`);
+    check('walking renders, and moves him', budget.walking > 5 && budget.moved > 1e-6,
+      `${budget.walking} renders, moved ${budget.moved.toExponential(1)} deg`);
+    check('it goes quiet again once he stops', budget.settled === 0, `${budget.settled} renders`);
+  }
+
   // ── the real cartography, loaded into a real MapLibre ─────────────────────
   // The static style-spec validator runs in tests/style.test.ts. This is the
   // other half: MapLibre itself must accept the style and build its layers.

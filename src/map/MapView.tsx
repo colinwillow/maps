@@ -19,6 +19,8 @@ declare global {
     __mapReady?: boolean;
     /** Test hook: suppress the cloud deck so the globe's face is bare. */
     __noClouds?: boolean;
+    /** Test hook: drive the character directly, bypassing the thumb sticks. */
+    __charMove?: (east: number, south: number) => void;
   }
 }
 

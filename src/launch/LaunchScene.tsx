@@ -41,8 +41,11 @@ export function LaunchScene({ map }: { map: maplibregl.Map | null }) {
     if (!map) return;
     const update = () => {
       const next = sceneOpacity(map.getZoom(), LAUNCH.fadeFrom, LAUNCH.fadeTo);
+      const wasHidden = opacityRef.current <= 0.001;
       opacityRef.current = next;
       setOpacity(next);
+      // Coming back into view: the draw loop stopped itself, so restart it.
+      if (wasHidden && next > 0.001) window.dispatchEvent(new Event('overworld:scenewake'));
     };
     update();
     map.on('move', update);
@@ -101,10 +104,17 @@ export function LaunchScene({ map }: { map: maplibregl.Map | null }) {
     map.on('resize', remeasure);
 
     const frame = () => {
-      raf = requestAnimationFrame(frame);
       const alpha = opacityRef.current;
-      ctx.clearRect(0, 0, w, h);
-      if (alpha <= 0.001) return;
+      // STOP once it has faded out, rather than looping on an invisible
+      // canvas. A full-screen clear at device pixel ratio every frame, for
+      // something nobody can see, is pure cost while the character is walking.
+      // The zoom watcher below restarts it if the camera pulls back out.
+      if (alpha <= 0.001) {
+        ctx.clearRect(0, 0, w, h);
+        raf = 0;
+        return;
+      }
+      raf = requestAnimationFrame(frame);
 
       const t = (performance.now() - started) / 1000;
       const centre = map.project(map.getCenter());
@@ -223,9 +233,14 @@ export function LaunchScene({ map }: { map: maplibregl.Map | null }) {
       ctx.restore();
     };
     raf = requestAnimationFrame(frame);
+    const wake = () => {
+      if (!raf) raf = requestAnimationFrame(frame);
+    };
+    window.addEventListener('overworld:scenewake', wake);
 
     return () => {
       cancelAnimationFrame(raf);
+      window.removeEventListener('overworld:scenewake', wake);
       window.removeEventListener('resize', onResize);
       map.off('move', remeasure);
       map.off('resize', remeasure);

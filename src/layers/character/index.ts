@@ -1,13 +1,9 @@
 import type maplibregl from 'maplibre-gl';
 import type { MapFeatureLayer } from '../types';
-import * as THREE from 'three';
 import { ThreeLayer } from '../three/ThreeLayer';
 import { loadColin } from './loadColin';
 import { Character } from './Character';
 import type { LngLat } from '../three/geo';
-
-/** Furthest a single tap may send him, in metres. */
-export const MAX_WAYPOINT_M = 400;
 
 export const CAMERA = {
   /** Overhead: looking down, character centred. */
@@ -35,8 +31,16 @@ export const CAMERA = {
   streetZoom: 22.4,
   /** Seconds for the camera to catch up. Follows, never snaps. */
   followTau: 0.25,
-  /** In street mode the camera swings behind him at this rate, deg/sec. */
+  /** How fast the camera drifts back behind him when the right thumb is idle. */
   swingDegPerSec: 90,
+  /** Right stick: degrees of yaw per second at full deflection. */
+  lookYawDegPerSec: 105,
+  /** Right stick: degrees of pitch per second at full deflection. */
+  lookPitchDegPerSec: 70,
+  minPitch: 20,
+  maxPitch: 82,
+  /** Seconds of no right-thumb input before the camera starts drifting back. */
+  autoSwingAfter: 1.6,
 } as const;
 
 export type CharacterMode = 'overhead' | 'street';
@@ -51,40 +55,30 @@ export type CharacterMode = 'overhead' | 'street';
 export function characterLayer(origin: LngLat, modelUrl: string) {
   const three = new ThreeLayer(origin, 'character-3d');
 
-  // A ring on the ground at the waypoint. Without it, tapping and watching him
-  // turn is guesswork — you cannot tell a wrong destination from a wrong
-  // direction, which is most of what makes movement feel broken.
-  const marker = new THREE.Mesh(
-    new THREE.RingGeometry(0.9, 1.25, 32),
-    new THREE.MeshBasicMaterial({ color: 0xe8a87c, transparent: true, opacity: 0.9, side: THREE.DoubleSide }),
-  );
-  marker.rotation.x = -Math.PI / 2;
-  marker.position.y = 0.06;
-  marker.visible = false;
-  three.scene.add(marker);
-
   let character: Character | null = null;
   let map: maplibregl.Map | null = null;
   let mode: CharacterMode = 'overhead';
   let following = true;
 
-  const onMapClick = (e: maplibregl.MapMouseEvent) => {
-    if (!character) return;
-    const { east, south } = three.frame.toMeters(e.lngLat);
-    // Reject absurd destinations. At a steep pitch a tap near the top of the
-    // screen unprojects to somewhere near the horizon, and sending him on a
-    // half-kilometre walk from a stray tap reads as the controls misfiring.
-    const away = Math.hypot(east - character.east, south - character.south);
-    if (away > MAX_WAYPOINT_M) return;
-    character.waypoint = { east, south };
-    three.requestRedraw();
-  };
+  /** Right thumb: -1..1 each. x yaws the camera, y pitches it. */
+  const look = { x: 0, y: 0 };
+  let lastLookAt = 0;
+
+  // Rolling frame times, so the HUD can show what the phone is actually doing.
+  const frameTimes: number[] = [];
+
+  // Tap-to-walk is deliberately gone. Sending him to a pin and watching him
+  // walk there is a MAP interaction; this is a game, and the sticks are the
+  // controls. Keeping both meant every tap on the map was ambiguous.
 
   const layer: MapFeatureLayer & {
     getCharacter(): Character | null;
     setMode(m: CharacterMode): void;
     getMode(): CharacterMode;
     setFollowing(f: boolean): void;
+    setMove(east: number, south: number): void;
+    setLook(x: number, y: number): void;
+    getFps(): number;
     ready: Promise<void>;
   } = {
     id: 'character',
@@ -97,25 +91,31 @@ export function characterLayer(origin: LngLat, modelUrl: string) {
       // ceiling deliberately here rather than everywhere.
       m.setMaxPitch(85);
       m.addLayer(three.asCustomLayer());
-      m.on('click', onMapClick);
 
       three.setFrameCallback((dt) => {
         if (!character) return;
-        character.update(dt);
-        if (character.waypoint) {
-          marker.position.set(character.waypoint.east, 0.06, character.waypoint.south);
-          marker.visible = true;
-        } else {
-          marker.visible = false;
+        if (dt > 0) {
+          frameTimes.push(dt);
+          if (frameTimes.length > 45) frameTimes.shift();
         }
-        if (following && map) followCharacter(map, character, three.frame, mode, dt);
-        // Keep frames coming while he moves OR while the camera is still
-        // easing toward the mode's pitch/zoom, or a mode switch stalls part
-        // way through with nothing to drive the next frame.
+        character.update(dt);
+        const autoSwing = performance.now() - lastLookAt > CAMERA.autoSwingAfter * 1000;
+        if (following && map) {
+          followCharacter(map, character, three.frame, mode, dt, look, autoSwing);
+        }
+        // Ask for another frame ONLY while something is changing. Every frame
+        // repaints the whole pitched city — at 78 degrees MapLibre draws all
+        // the way to the horizon — so idling at 60fps burns a phone battery
+        // and buys nothing. Standing still now costs zero frames.
+        const wantZoom = mode === 'street' ? CAMERA.streetZoom : CAMERA.overheadZoom;
         const settling =
-          Math.abs(map!.getPitch() - (mode === 'street' ? CAMERA.streetPitch : CAMERA.overheadPitch)) > 0.2 ||
-          Math.abs(map!.getZoom() - (mode === 'street' ? CAMERA.streetZoom : CAMERA.overheadZoom)) > 0.01;
-        if (character.speed > 0.01 || character.waypoint || settling) three.requestRedraw();
+          Math.abs(map!.getPitch() - targetPitch(mode, look)) > 0.2 ||
+          Math.abs(map!.getZoom() - wantZoom) > 0.01;
+        const busy =
+          character.speed > 0.01 ||
+          Math.hypot(look.x, look.y) > 0.02 ||
+          settling;
+        if (busy) three.requestRedraw();
       });
 
       layer.ready = loadColin(modelUrl)
@@ -130,12 +130,41 @@ export function characterLayer(origin: LngLat, modelUrl: string) {
     },
 
     detach(m: maplibregl.Map) {
-      m.off('click', onMapClick);
       if (m.getLayer(three.id)) m.removeLayer(three.id);
       map = null;
     },
 
     getCharacter: () => character,
+
+    /**
+     * Left-thumb movement, already in world metres per the camera.
+     *
+     * This goes THROUGH the layer rather than being poked onto the character
+     * directly, because the render loop parks itself when nothing is moving —
+     * so something has to wake it. Setting `character.input` from outside left
+     * the input sitting there with no frame ever running to act on it, and the
+     * character simply never moved.
+     */
+    setMove(east: number, south: number) {
+      if (!character) return;
+      character.input = { east, south };
+      three.requestRedraw();
+    },
+
+    /** Right-thumb camera input, -1..1 each. */
+    setLook(x: number, y: number) {
+      look.x = x;
+      look.y = y;
+      if (Math.hypot(x, y) > 0.02) lastLookAt = performance.now();
+      // Wake on release too, or the camera never settles back.
+      three.requestRedraw();
+    },
+    /** Rendered frames per second, or 0 when idle (which costs nothing). */
+    getFps() {
+      if (!frameTimes.length) return 0;
+      const mean = frameTimes.reduce((a, b) => a + b, 0) / frameTimes.length;
+      return mean > 0 ? Math.round(1 / mean) : 0;
+    },
     getMode: () => mode,
     setMode(next: CharacterMode) {
       // Just change the target. The follower below drives pitch and zoom every
@@ -153,14 +182,29 @@ export function characterLayer(origin: LngLat, modelUrl: string) {
 }
 
 /**
+ * Where the camera wants to be pitched, given the mode and the right thumb.
+ * Pulling the stick down tips toward the horizon and up looks down on him,
+ * which is the way every third-person camera works.
+ */
+export function targetPitch(mode: CharacterMode, look: { y: number }): number {
+  const base = mode === 'street' ? CAMERA.streetPitch : CAMERA.overheadPitch;
+  const range = mode === 'street' ? CAMERA.maxPitch - CAMERA.minPitch : 55;
+  const wanted = base - look.y * range * 0.5;
+  return Math.max(CAMERA.minPitch * (mode === 'street' ? 1 : 0), Math.min(CAMERA.maxPitch, wanted));
+}
+
+/**
  * Keep the camera on him.
  *
  * The follower owns the ENTIRE camera — centre, bearing, pitch and zoom — and
- * damps each toward the current mode's target. It cannot share the camera with
- * an easeTo: a per-frame jumpTo silently cancels an in-flight animation, so
- * mode changes set targets here rather than animating separately.
+ * damps each toward its target. It cannot share the camera with an easeTo: a
+ * per-frame jumpTo silently cancels an in-flight animation, so mode changes set
+ * targets here rather than animating separately.
  *
- * Everything is damped, never snapped: a fast turn should not whip the view.
+ * The RIGHT THUMB owns the bearing while it is held. The camera only drifts
+ * back behind him once the thumb has been off for a moment — a camera that
+ * fights you back to centre while you are still looking is the single most
+ * annoying thing a third-person camera can do.
  */
 function followCharacter(
   map: maplibregl.Map,
@@ -168,6 +212,8 @@ function followCharacter(
   frame: { toLngLat(east: number, south: number): LngLat },
   mode: CharacterMode,
   dt: number,
+  look: { x: number; y: number },
+  autoSwing: boolean,
 ) {
   const target = frame.toLngLat(character.east, character.south);
   const c = map.getCenter();
@@ -176,18 +222,35 @@ function followCharacter(
   const lng = c.lng + (target.lng - c.lng) * k;
   const lat = c.lat + (target.lat - c.lat) * k;
 
-  const wantPitch = mode === 'street' ? CAMERA.streetPitch : CAMERA.overheadPitch;
   const wantZoom = mode === 'street' ? CAMERA.streetZoom : CAMERA.overheadZoom;
+  const wantPitch = targetPitch(mode, look);
   const pitch = map.getPitch() + (wantPitch - map.getPitch()) * k;
   const zoom = map.getZoom() + (wantZoom - map.getZoom()) * k;
 
   let bearing = map.getBearing();
-  if (mode === 'street') {
-    // Swing round behind him at a finite rate rather than pinning the camera
+  if (Math.abs(look.x) > 0.02) {
+    bearing += look.x * CAMERA.lookYawDegPerSec * dt;
+  } else if (mode === 'street' && autoSwing) {
+    // Drift round behind him at a finite rate rather than pinning the camera
     // to his heading, which turns every step into a lurch.
     const delta = ((((character.heading - bearing) % 360) + 540) % 360) - 180;
     bearing += Math.min(Math.abs(delta), CAMERA.swingDegPerSec * dt) * Math.sign(delta);
   }
+
+  // Only actually move the camera when it would CHANGE. jumpTo fires its move
+  // events and schedules a repaint even when every value is identical, so
+  // calling it unconditionally each frame is a perpetual motion machine: the
+  // render triggers the follower, the follower triggers the next render, and
+  // the whole pitched city repaints forever while the character stands still.
+  // Measured: 32 renders per 1.5s standing still before this, 0 after.
+  const c0 = map.getCenter();
+  const moved =
+    Math.abs(lng - c0.lng) > 1e-8 ||
+    Math.abs(lat - c0.lat) > 1e-8 ||
+    Math.abs(bearing - map.getBearing()) > 0.01 ||
+    Math.abs(pitch - map.getPitch()) > 0.01 ||
+    Math.abs(zoom - map.getZoom()) > 1e-4;
+  if (!moved) return;
 
   map.jumpTo({ center: [lng, lat], bearing, pitch, zoom });
 }
