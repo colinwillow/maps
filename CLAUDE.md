@@ -16,6 +16,25 @@ of it being a separate app is that the map's MapLibre context and the game's
 WebGL context never have to share state — that fight is what the map's own
 character layer already has to manage, and the city does not need it.
 
+## Where it actually is
+
+**`https://colinwillow.github.io/maps/pdx/`** — and every part of that is a
+thing somebody has already got wrong once:
+
+* **`.github.io`, not `.github.com`.** `username.github.com` is a legacy alias
+  that redirects; the repo host is a different domain from the Pages host.
+* **`/maps/`, because the repo is `maps`.** A project repo's Pages site lives
+  under its own name. There is an empty `colinwillow/portland` repo, and
+  `colinwillow.github.io/portland` serves *that* — a white page with the word
+  "portland" on it, which looks exactly like a broken deploy and is not one.
+* **`/pdx/`, because the game is `public/pdx/`.** Vite copies `public/`
+  verbatim, so `/maps/` is the MAP PLATFORM and the city is one level down.
+  `index.html` carries a relative `./pdx/` link so the root is not a dead end;
+  it is an anchor and nothing more, because neither half imports the other.
+
+`vite.config.ts` uses `base: './'`, so all of this works the same at a domain
+root if a custom domain is ever pointed at it.
+
 ## Anything meant for testing has to reach a phone
 
 Pages serves `main` from `.github/workflows/deploy.yml`. A change sitting on a

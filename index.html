@@ -11,6 +11,31 @@
   </head>
   <body>
     <div id="root"></div>
+    <!--
+      A LINK, NOT A ROUTE. The walkable Portland in public/pdx/ is a separate
+      app with its own WebGL context and no build step, and the whole point of
+      that separation is that neither half imports the other. So the only thing
+      the map platform knows about the city is this anchor -- and without it
+      the deployed site has a half nobody can reach, which is exactly what
+      "colinwillow.github.io/portland shows a white page" was.
+
+      The href is RELATIVE, like every other asset here (vite's base is './'),
+      so it works at a domain root and under a project-site subpath alike.
+    -->
+    <a id="toPdx" href="./pdx/">walk Portland &rarr;</a>
+    <style>
+      #toPdx {
+        position: fixed; z-index: 50;
+        left: 50%; transform: translateX(-50%);
+        bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+        padding: 11px 20px; border-radius: 999px;
+        font: 600 15px/1 'Barlow Condensed', system-ui, sans-serif;
+        letter-spacing: .04em; text-transform: uppercase; text-decoration: none;
+        color: #17211f; background: #e8e4da; border: 2px solid #17211f;
+        box-shadow: 0 3px 0 #17211f;
+      }
+      #toPdx:active { transform: translateX(-50%) translateY(3px); box-shadow: none; }
+    </style>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
