@@ -12,17 +12,17 @@
   <body>
     <div id="root"></div>
     <!--
-      A LINK, NOT A ROUTE. The walkable Portland in public/pdx/ is a separate
-      app with its own WebGL context and no build step, and the whole point of
-      that separation is that neither half imports the other. So the only thing
-      the map platform knows about the city is this anchor -- and without it
-      the deployed site has a half nobody can reach, which is exactly what
-      "colinwillow.github.io/portland shows a white page" was.
+      A LINK, AND NOTHING ELSE. The walkable Portland lives in its own repo now
+      (colinwillow/portland) because it shares nothing with this app but a
+      domain: its own WebGL context, its own vendored three, no build step.
+      This is the only thing the map platform knows about it.
 
-      The href is RELATIVE, like every other asset here (vite's base is './'),
-      so it works at a domain root and under a project-site subpath alike.
+      ABSOLUTE, because it is a different origin. It was `./pdx/` while the
+      city rode along inside public/ here, and that stopped being true the
+      moment it moved.
     -->
-    <a id="toPdx" href="./pdx/">walk Portland &rarr;</a>
+    <a id="toPdx" href="https://colinwillow.github.io/portland/"
+       target="_blank" rel="noopener">walk Portland &rarr;</a>
     <style>
       #toPdx {
         position: fixed; z-index: 50;

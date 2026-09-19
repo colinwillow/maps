@@ -3,11 +3,3 @@ dist/
 .env
 .env.local
 *.local
-
-# The Portland bake's working files. Both are derived and both are re-made by
-# `npm run pdx:fetch`; the .ovindex costs a minute to rebuild and the .cache
-# about thirty seconds. What IS committed is public/pdx/data/ -- Pages serves
-# it, and a static page with no build step has nothing to generate it at deploy.
-tools/pdx/.cache/
-tools/pdx/.ovindex/
-tools/pdx/__pycache__/
