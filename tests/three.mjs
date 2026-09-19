@@ -342,6 +342,94 @@ try {
   check('every planned prop is instanced into the scene',
     city.propCount === city.planned && city.planned > 20 && city.instanced > 0,
     `${city.propCount}/${city.planned} props in ${city.instanced} instanced meshes`);
+  // ── the buildings ─────────────────────────────────────────────────────────
+  const town = await page.evaluate(async () => {
+    const { ThreeLayer } = await import('/src/layers/three/ThreeLayer.ts');
+    const { buildBuildings } = await import('/src/layers/city/assemble.ts');
+
+    const ORIGIN = { lng: -122.6784, lat: 45.5152 };
+    const host = document.createElement('div');
+    host.style.cssText = 'position:fixed;left:0;top:0;width:600px;height:600px;z-index:-1;';
+    document.body.appendChild(host);
+    const map = new (window.__map.constructor)({
+      container: host, center: ORIGIN, zoom: 17, pitch: 70, bearing: 0,
+      attributionControl: false,
+      canvasContextAttributes: { preserveDrawingBuffer: true },
+      style: { version: 8, sources: {}, layers: [
+        { id: 'bg', type: 'background', paint: { 'background-color': '#ffffff' } }] },
+    });
+    await new Promise((r) => map.once('load', r));
+    const layer = new ThreeLayer(ORIGIN, 'town-verify');
+    map.addLayer(layer.asCustomLayer());
+
+    // A block of four, north of the camera so the pitched view looks at them.
+    const sq = (size, cx, cz) => {
+      const h = size / 2;
+      return [{ east: cx - h, south: cz - h }, { east: cx + h, south: cz - h },
+              { east: cx + h, south: cz + h }, { east: cx - h, south: cz + h }];
+    };
+    const fps = [
+      { id: 1, rings: [sq(20, -30, -60)], height: 12, minHeight: 0 },
+      { id: 2, rings: [sq(24, 5, -60)],   height: 48, minHeight: 0 },
+      { id: 3, rings: [sq(14, 36, -55)],  height: 6,  minHeight: 0 },
+      { id: 4, rings: [sq(40, -10, -110)], height: 9, minHeight: 0 },
+    ];
+    const shoot = async (list) => {
+      const built = buildBuildings(list, { east: 0, south: 0 });
+      layer.scene.add(built.group);
+      map.triggerRepaint();
+      await new Promise((r) => setTimeout(r, 900));
+
+      const src = map.getCanvas();
+      const cv = document.createElement('canvas');
+      cv.width = src.width; cv.height = src.height;
+      const ctx = cv.getContext('2d');
+      ctx.drawImage(src, 0, 0);
+      const { data } = ctx.getImageData(0, 0, src.width, src.height);
+      let painted = 0, dark = 0, topRow = src.height;
+      for (let y = 0; y < src.height; y++) {
+        for (let x = 0; x < src.width; x++) {
+          const i = (y * src.width + x) * 4;
+          if (data[i] < 245 || data[i + 1] < 245 || data[i + 2] < 245) {
+            painted++;
+            if (y < topRow) topRow = y;
+          }
+          // Black would mean vertexColors with no colour attribute.
+          if (data[i] < 20 && data[i + 1] < 20 && data[i + 2] < 20) dark++;
+        }
+      }
+      layer.scene.remove(built.group);
+      const r = { painted, dark, topRow, count: built.count,
+                  meshes: built.group.children.length };
+      built.dispose();
+      return r;
+    };
+
+    // Shoot the block twice, once without the 48m tower. Height has to turn
+    // into SCREEN height; comparing two renders proves that without needing to
+    // re-derive the projection, which would only agree with itself.
+    const withTower = await shoot(fps);
+    const without = await shoot(fps.filter((f) => f.height < 40));
+    const out = { ...withTower, topRowWithout: without.topRow, paintedWithout: without.painted };
+    map.remove(); host.remove();
+    return out;
+  });
+
+  check('the buildings reach the screen', town.painted > 6000, `${town.painted} painted pixels`);
+  check('they are not black', town.dark < town.painted * 0.02, `${town.dark} black pixels`);
+  check('four footprints, merged into a handful of meshes',
+    town.count === 4 && town.meshes > 0 && town.meshes <= 20,
+    `${town.count} buildings in ${town.meshes} meshes`);
+  // A 48m tower has to reach further up the screen than the 12m block beside
+  // it. Comparing two renders proves height becomes screen height without
+  // re-deriving the projection, which would only ever agree with itself. Both
+  // renders have to be populated, or "the tower is taller" would also pass
+  // with the second render empty.
+  check('a tower stands up off the ground',
+    town.paintedWithout > 3000 && town.topRowWithout - town.topRow > 20,
+    `tops at row ${town.topRow}, without the tower ${town.topRowWithout}` +
+    ` (${town.paintedWithout} px)`);
+
   check('a plain street gets trees, lamps and poles',
     ['lamp', 'pole', 'tree'].every((k) => city.kinds.includes(k)), city.kinds.join(','));
 

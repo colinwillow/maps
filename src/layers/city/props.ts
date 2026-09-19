@@ -130,6 +130,7 @@ function partsFor(kind: PropKind): Part[] {
  */
 export function buildProps(props: Prop[]): { group: THREE.Group; dispose(): void } {
   const group = new THREE.Group();
+  group.name = 'city-props';
   const owned: { dispose(): void }[] = [];
 
   const byKind = new Map<PropKind, Prop[]>();

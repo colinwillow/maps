@@ -207,10 +207,7 @@ everywhere else. So the furniture comes out of the OSM road geometry the
 basemap is already drawing: `plan.ts` turns roads in metres into props in
 metres, and walking to a street that really exists finds it furnished.
 
-Buildings deliberately do NOT come from here. OpenMapTiles carries real
-footprints and real `render_height`, so `building-3d` in the basemap is already
-drawing the true city, skyscrapers included. Re-extruding the same boxes in
-three would be a second copy fighting the first for the same pixels.
+Buildings are next door in `buildings.ts` and `assemble.ts` — see below.
 
 `plan.ts` is pure — roads in, props out, no three and no MapLibre — which is
 what lets the placement be pinned down in unit tests rather than squinted at on
@@ -238,6 +235,56 @@ Things worth knowing:
   that is the street you are most likely standing on.
 * **An empty tile query does not demolish the city.** Tiles come and go as you
   move.
+
+### A language of buildings
+
+`buildings.ts`, `facades.ts`, `assemble.ts`. The SHAPE of every building is
+real: OpenMapTiles carries the OSM footprint and a `render_height`, so
+downtown's towers are the towers that are actually there. What is generated is
+everything that makes a box read as a building.
+
+A building is a STACK of sections:
+
+```
+cornice   h-c .. h     one band
+body      g   .. h-c   the storey band, tiled once per storey
+ground    0   .. g     shopfront, lobby, garage door
+```
+
+and "taller" means **more repeats of the middle**, not a taller middle. The
+ground floor and the cornice are fixed heights, not fractions — a shopfront is
+about four and a half metres whether there are three storeys above it or
+thirty, and scaling it with the total is what makes procedural cities look like
+toys. A test pins that a 14m and a 120m building have the *same* ground floor.
+
+Five families, chosen from the footprint and the height rather than at random,
+so the city sorts itself out: 45m+ is a tower, 1100 square metres under 16m is
+a warehouse, 260 square metres under 7.5m is a house with a hipped roof, and
+the rest is brick low-rise or concrete mid-rise.
+
+The windows are **texture, not geometry** — a window is four triangles and a
+block is a few thousand windows. The UVs carry METRES (u is distance along the
+facade over the family's bay width, v is height over the storey height), so one
+128x192 tile serves a three storey building and a thirty storey one without
+stretching. Per-building colour variation cannot come from the material,
+because every building of a family shares one so they can merge into a single
+draw call; it rides in a vertex colour attribute instead. Ninety buildings come
+out as about fourteen meshes.
+
+**Three owns the buildings while the character is walking**, and MapLibre's
+`building-3d` is switched off for the duration and restored on the way out.
+Drawing both means two copies of every building fighting for the same pixels,
+and a style layer has no idea how far away anything is, so there is no way to
+hide the extrusion for only the near ones.
+
+Two winding bugs the tests caught before any of it was ever looked at, both of
+which draw a building that is entirely inside out:
+
+* the wall quads were wound against the normal they declared, so every face
+  would have been culled away — the building keeps exactly the walls it says it
+  has and draws none of them;
+* `ShapeGeometry` lies in XY, and rotating it flat inverts the winding, so
+  every roof faced downwards and was only visible from underneath.
 
 ### The roads had to become surfaces first
 

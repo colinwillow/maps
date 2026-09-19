@@ -129,9 +129,10 @@ try {
   // this pins, and it is invisible to every other check here.
   const overPlanet = await page.evaluate(async () => {
     const { globeScreenRadius } = await import('/src/launch/globeMetrics.ts');
-    // Clouds are DELIBERATELY drawn on the planet, so switch them off for
-    // this sample; the point of the check is that nothing else is.
-    window.__noClouds = true;
+    // Clouds and passing craft are DELIBERATELY drawn over the planet, so
+    // switch them off for this sample; the point of the check is that none of
+    // the BACKDROP — stars, distant planets — reaches the globe's face.
+    window.__backdropOnly = true;
     // The scene's draw loop PARKS itself when nothing is changing, so flipping
     // a flag does not repaint on its own — without this wake the sample reads
     // the last frame drawn, clouds and all, and fails intermittently.
@@ -151,9 +152,51 @@ try {
       total++;
       if (ctx.getImageData(x, y, 1, 1).data[3] > 8) opaque++;
     }
-    window.__noClouds = false;
+    window.__backdropOnly = false;
     return { opaque, total };
   });
+  // THE SCENE MUST CLEAR ITSELF between frames. It did not: the canvas only
+  // cleared on the way out, when the scene parked, so every frame painted on
+  // top of every frame before it. Stars smeared into a wash, the cloud deck
+  // piled up on itself, and a passing craft left a train of a hundred
+  // overlapping copies behind it. Painted area growing over time is the
+  // signature, and nothing else here would have caught it.
+  const accumulation = await page.evaluate(async () => {
+    const cv = document.querySelector('.orbit-canvas');
+    const ctx = cv.getContext('2d');
+    // Count only COLOURED pixels. Stars and clouds are white and the sky is
+    // grey, so the only saturated things on this canvas are the two distant
+    // planets, which never move, and the orbiting craft, which do. That makes
+    // this number flat when the canvas clears and a rising trail when it does
+    // not — where total painted area barely moves either way, because one
+    // frame already covers a third of the canvas.
+    const count = () => {
+      const { data } = ctx.getImageData(0, 0, cv.width, cv.height);
+      let n = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        if (data[i + 3] < 40) continue;
+        const max = Math.max(data[i], data[i + 1], data[i + 2]);
+        const min = Math.min(data[i], data[i + 1], data[i + 2]);
+        if (max - min > 40) n++;
+      }
+      return n;
+    };
+    // Wipe it, let exactly one frame land, and count that. A scene that
+    // clears itself paints the same amount two seconds later; one that does
+    // not keeps adding to it. Measuring without wiping first misses this,
+    // because a canvas that has been accumulating for ten seconds is already
+    // saturated and barely grows.
+    const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    await frame();
+    const a = count();
+    await new Promise((r) => setTimeout(r, 2500));
+    return { a, b: count() };
+  });
+  check('the launch scene clears itself between frames',
+    accumulation.b < accumulation.a * 1.12 && accumulation.a > 300,
+    `${accumulation.a} coloured pixels -> ${accumulation.b}`);
+
   check('backdrop (stars, planets) is not painted over the globe',
     overPlanet.total > 24 && overPlanet.opaque <= 3,
     `${overPlanet.opaque}/${overPlanet.total} samples painted`);
@@ -226,7 +269,13 @@ try {
   const z0 = await page.evaluate(() => window.__map.getZoom());
   await page.mouse.move(450, 300);
   await page.mouse.wheel(0, -400);
-  await page.waitForTimeout(500);
+  // Wait for the zoom to LAND rather than guessing how long MapLibre's wheel
+  // easing takes. A fixed sleep here reads the pre-zoom value now and then,
+  // which fails a check about direction for a reason that has nothing to do
+  // with direction.
+  await page.waitForFunction(
+    (z) => window.__map.getZoom() > z + 0.05, z0, { timeout: 4000 },
+  ).catch(() => {});
   const z1 = await page.evaluate(() => window.__map.getZoom());
   check('wheel up zooms in', z1 > z0 + 0.05, `${z0.toFixed(2)} -> ${z1.toFixed(2)}`);
 
@@ -267,6 +316,14 @@ try {
       map.on('render', tick);
       setTimeout(() => { map.off('render', tick); res(n); }, ms);
     });
+    // This dev style has no building-3d layer to hide, so the handover would
+    // pass vacuously. Stand one in, so the check is about the character layer
+    // finding it and switching it off rather than about it being absent.
+    if (!map.getLayer('building-3d')) {
+      map.addLayer({ id: 'building-3d', type: 'background',
+        paint: { 'background-color': '#000000', 'background-opacity': 0 } });
+    }
+
     const enter = document.querySelector('.char-enter');
     if (!enter) return { skipped: true };
     enter.click();
@@ -290,6 +347,23 @@ try {
         points: ticks.map((south) => ({ east, south })) })),
     ];
     const props = window.__charRoads?.(grid) ?? 0;
+    // A block of buildings, through the same seam, for the same reason.
+    const sq = (size, cx, cz) => {
+      const h = size / 2;
+      return [{ east: cx - h, south: cz - h }, { east: cx + h, south: cz - h },
+              { east: cx + h, south: cz + h }, { east: cx - h, south: cz + h }];
+    };
+    const block = [];
+    for (let i = 0; i < 24; i++) {
+      block.push({ id: 500 + i, minHeight: 0, height: 7 + (i % 6) * 11,
+        rings: [sq(16, (i % 6) * 40 - 100, Math.floor(i / 6) * 40 - 60)] });
+    }
+    const buildings = window.__charBuildings?.(block) ?? 0;
+    // MapLibre's own extrusion must be OFF while three owns the buildings, or
+    // every building is drawn twice, fighting for the same pixels.
+    const extrusionVisible = map.getLayer('building-3d')
+      ? map.getLayoutProperty('building-3d', 'visibility') !== 'none'
+      : null;
     // Long enough for the street-view camera to finish damping into place with
     // the city in the scene, since an unsettled camera legitimately renders.
     await new Promise((r) => setTimeout(r, 4000));
@@ -309,8 +383,35 @@ try {
     // this only stops it depending on a stopwatch.
     let settled = -1;
     for (let i = 0; i < 6 && settled !== 0; i++) settled = await count(1200);
+    // The controls have to be VISIBLE without being touched first. They were
+    // not: the knob sat at opacity 0 until a thumb landed and there was no
+    // base at all, so there was no way to tell the sticks existed, let alone
+    // where. Measured BEFORE Exit, or there are no sticks left to measure.
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const sticks = [...document.querySelectorAll('.stick-base')].map((el) => {
+      const r = el.getBoundingClientRect();
+      return {
+        opacity: +getComputedStyle(el).opacity,
+        w: Math.round(r.width),
+        onScreen: r.left >= 0 && r.top >= 0 && r.right <= vw + 1 && r.bottom <= vh + 1,
+        low: r.top > vh * 0.6,
+        leftHalf: r.left + r.width / 2 < vw / 2,
+      };
+    });
+
+    // ...and the extrusion must come BACK when he leaves, or the map is left
+    // with no buildings at all for everyone who never pressed Walk around.
+    const exit = [...document.querySelectorAll('.char-btn')]
+      .find((b) => b.textContent.trim() === 'Exit');
+    exit?.click();
+    await new Promise((r) => setTimeout(r, 500));
+    const extrusionRestored = map.getLayer('building-3d')
+      ? map.getLayoutProperty('building-3d', 'visibility') !== 'none'
+      : null;
+
     return {
-      idle, walking, settled, props, propsAfterIdle,
+      idle, walking, settled, props, propsAfterIdle, buildings, sticks,
+      extrusionVisible, extrusionRestored,
       moved: Math.hypot(after.lng - before.lng, after.lat - before.lat),
     };
   });
@@ -320,6 +421,19 @@ try {
   } else {
     check('the character layer furnishes the streets around him',
       budget.props > 200, `${budget.props} props`);
+    check('the character layer builds the buildings around him',
+      budget.buildings > 12, `${budget.buildings} buildings`);
+    check('MapLibre stops drawing its own extrusions while three owns them',
+      budget.extrusionVisible === false, `visible=${budget.extrusionVisible}`);
+    check('and draws them again once he leaves',
+      budget.extrusionRestored === true, `visible=${budget.extrusionRestored}`);
+    check('both thumb sticks are drawn before anything is touched',
+      budget.sticks.length === 2 && budget.sticks.every((s) => s.opacity > 0.3 && s.w > 60),
+      JSON.stringify(budget.sticks.map((s) => `${s.w}px @${s.opacity}`)));
+    check('they sit under the thumbs, one each side, fully on screen',
+      budget.sticks.length === 2 && budget.sticks.every((s) => s.onScreen && s.low) &&
+      budget.sticks.filter((s) => s.leftHalf).length === 1,
+      JSON.stringify(budget.sticks.map((s) => ({ low: s.low, on: s.onScreen, left: s.leftHalf }))));
     check('the furniture survives the map going idle',
       budget.propsAfterIdle === budget.props, `${budget.propsAfterIdle} of ${budget.props} left`);
     // Measured with the generated city in the scene: a thousand instanced
@@ -329,31 +443,6 @@ try {
       `${budget.walking} renders, moved ${budget.moved.toExponential(1)} deg`);
     check('it goes quiet again once he stops', budget.settled === 0, `${budget.settled} renders`);
   }
-
-  // The controls have to be VISIBLE without being touched first. They were
-  // not: the knob sat at opacity 0 until a thumb landed and there was no base
-  // at all, so there was no way to tell the sticks existed, let alone where.
-  const sticks = await page.evaluate(() => {
-    const vw = window.innerWidth, vh = window.innerHeight;
-    return [...document.querySelectorAll('.stick-base')].map((el) => {
-      const r = el.getBoundingClientRect();
-      return {
-        opacity: +getComputedStyle(el).opacity,
-        w: Math.round(r.width),
-        onScreen: r.left >= 0 && r.top >= 0 && r.right <= vw + 1 && r.bottom <= vh + 1,
-        // A thumb has to be able to reach it: bottom third of the screen.
-        low: r.top > vh * 0.6,
-        leftHalf: r.left + r.width / 2 < vw / 2,
-      };
-    });
-  });
-  check('both thumb sticks are drawn before anything is touched',
-    sticks.length === 2 && sticks.every((s) => s.opacity > 0.3 && s.w > 60),
-    JSON.stringify(sticks.map((s) => `${s.w}px @${s.opacity}`)));
-  check('they sit under the thumbs, one each side, fully on screen',
-    sticks.length === 2 && sticks.every((s) => s.onScreen && s.low) &&
-    sticks.filter((s) => s.leftHalf).length === 1,
-    JSON.stringify(sticks.map((s) => ({ low: s.low, on: s.onScreen, left: s.leftHalf }))));
 
   // ── the real cartography, loaded into a real MapLibre ─────────────────────
   // The static style-spec validator runs in tests/style.test.ts. This is the
