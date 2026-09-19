@@ -19,6 +19,7 @@
 import { Soup, hash01 } from './build.js';
 import { Pavements } from './crowd.js';
 import { TRAFFIC, BOATS, AIR, CAR_COLORS } from './tune.js';
+import { tube } from './props.js';
 
 const rgb = (h) => [(h >> 16) & 255, (h >> 8) & 255, h & 255];
 const mul = (c, k) => [Math.min(255, c[0] * k) | 0, Math.min(255, c[1] * k) | 0,
@@ -156,6 +157,12 @@ export class Ambient {
       c.z = q.az + (q.bz - q.az) * t + ux * off;
       c.y = q.ay + (q.by - q.ay) * t;
       c.yaw = Math.atan2(ux, -uz);
+      // How far the wheels have turned. A wheel that is drawn round and does
+      // not ROTATE is worse than a slab: the eye reads the circle, expects the
+      // spin, and the car then reads as sliding. It is one number and it is
+      // the actual arc length over the actual radius, so it cannot drift out
+      // of step with the speed however that is retuned.
+      c.roll = (c.roll || 0) + v * dt / (TRAFFIC.wheelR * c.tall / TRAFFIC.tall);
       if ((c.x - px) ** 2 + (c.z - pz) ** 2 > keep2) c.live = false;
     }
   }
@@ -257,10 +264,12 @@ export class Ambient {
   draw(px, py, pz) {
     const s = new Soup(1024);
     const draw2 = TRAFFIC.draw * TRAFFIC.draw;
+    const hero2 = TRAFFIC.hero * TRAFFIC.hero;
     for (const c of this.cars) {
       if (!c.live) continue;
-      if ((c.x - px) ** 2 + (c.z - pz) ** 2 > draw2) continue;
-      car(s, c);
+      const d = (c.x - px) ** 2 + (c.z - pz) ** 2;
+      if (d > draw2) continue;
+      car(s, c, d < hero2);
     }
     const bd2 = BOATS.draw * BOATS.draw;
     for (const b of this.boats) {
@@ -326,16 +335,32 @@ export function prism(s, at, hx, hy, hz, yaw, col, shade = 1) {
  * same kind of reason: glass is the one part of a car that is a different
  * value from the paint, and at forty metres that contrast is the whole read.
  */
-export function car(s, c) {
+export function car(s, c, hero) {
   const L = c.len * 0.5, Wd = c.wide * 0.5, H = c.tall;
   const glass = mul([28, 34, 40], 1), ca = Math.cos(c.yaw), sa = Math.sin(c.yaw);
   // Local -Z is the NOSE, matching the yaw convention used everywhere here:
   // a heading h has forward (sin h, -cos h), which is local -Z under `prism`.
   const at = (fwd, up, side = 0) => [c.x + fwd * sa + side * ca, c.y + up,
                                      c.z - fwd * ca + side * sa];
-  for (const sx of [-1, 1]) for (const fz of [0.62, -0.62])
-    prism(s, at(fz * L, H * 0.16, sx * Wd * 0.98), 0.09, H * 0.16, c.len * 0.14,
-          c.yaw, [32, 32, 34]);
+  if (hero) {
+    // CLOSE ENOUGH TO SEE THE WHEEL, so it is a wheel: a round tyre on an
+    // axle, TURNING, with a hub that shows the turn (a plain black disc spins
+    // invisibly -- the spoke is what makes the rotation readable at all).
+    const R = TRAFFIC.wheelR * H / TRAFFIC.tall;
+    for (const fz of [0.62, -0.62]) {
+      const axle = TRAFFIC.axle;
+      prism(s, at(fz * L, R, 0), Wd * 0.99, axle, axle, c.yaw, [52, 54, 58]);
+      for (const sx of [-1, 1]) {
+        const cx = c.x + (fz * L) * sa + (sx * Wd * 0.96) * ca;
+        const cz = c.z - (fz * L) * ca + (sx * Wd * 0.96) * sa;
+        wheel(s, cx, c.y + R, cz, ca, sa, R, c.roll || 0);
+      }
+    }
+  } else {
+    for (const sx of [-1, 1]) for (const fz of [0.62, -0.62])
+      prism(s, at(fz * L, H * 0.16, sx * Wd * 0.98), 0.09, H * 0.16, c.len * 0.14,
+            c.yaw, [32, 32, 34]);
+  }
   prism(s, at(0, H * 0.46), Wd, H * 0.26, L, c.yaw, c.col);
   if (c.big) {
     // A van is one box the whole length, with a screen across the front of it.
@@ -348,6 +373,31 @@ export function car(s, c) {
   }
   prism(s, at(L * 0.99, H * 0.42), Wd * 0.72, H * 0.09, 0.05, c.yaw, [250, 240, 205]);
   prism(s, at(-L * 0.99, H * 0.42), Wd * 0.72, H * 0.09, 0.05, c.yaw, [170, 42, 34]);
+}
+
+/**
+ * A rolling wheel: a closed tyre about the car's own lateral axis, plus a
+ * spoke bar across the hub.
+ *
+ * THE SPOKE IS THE WHOLE POINT. A tyre is rotationally symmetric, so a black
+ * disc spinning and a black disc standing still are the same picture -- the
+ * rotation only exists on screen if something on the wheel is NOT symmetric.
+ */
+export function wheel(s, x, y, z, ca, sa, r, roll) {
+  const ax = ca, az = sa;                         // the car's lateral axis
+  const hw = r * 0.34;
+  tube(s, x, y, z, ax, 0, az, hw, r, 10, [24, 24, 26]);
+  tube(s, x + ax * hw * 0.55, y, z + az * hw * 0.55, ax, 0, az, hw * 0.5, r * 0.52, 8,
+       [150, 155, 162]);
+  // Two bars across the hub, turning with the wheel. In the wheel's own plane
+  // the two axes across the axle are world UP and the car's FORWARD.
+  const fx = -az, fz = ax;
+  for (const k of [0, 1]) {
+    const a = roll + k * Math.PI / 2;
+    const ux = fx * Math.cos(a), uy = Math.sin(a), uz = fz * Math.cos(a);
+    tube(s, x + ax * hw * 0.8, y, z + az * hw * 0.8, ux, uy, uz, r * 0.86, r * 0.09, 4,
+         [92, 96, 102]);
+  }
 }
 
 /**

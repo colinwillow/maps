@@ -345,6 +345,25 @@ export const CROWD = {
   hatOdds: 0.30, bagOdds: 0.34, brollyOdds: 0.11, dogOdds: 0.06,
 };
 
+// Per-prop LOD. `hero.js` swaps the nearest few dozen props for a better
+// version of themselves INSIDE the chunk's merged buffer, and draws them in
+// one extra call.
+//
+// THE COUNT IS THE BUDGET AND IT IS SMALL ON PURPOSE. A hero tree is about a
+// hundred and forty triangles against fourteen, and a hero car a hundred and
+// sixty against thirty -- so forty of them is roughly six thousand triangles,
+// which is one per cent of a frame here. Raising it past a hundred stops being
+// LOD and starts being "draw everything twice".
+export const HERO = {
+  count: 44,
+  range: 46,           // metres. Past this the low version is the truth anyway
+  every: 0.30,         // seconds between re-picks; the set changes as you walk
+  // Which kinds have a better version to swap to. A hydrant is already four
+  // triangles of the right shape and there is nothing to add to it.
+  on: new Set(['tree', 'tree_conifer', 'street_lamp', 'bench', 'picnic_table',
+               'car']),
+};
+
 export const STREAM = {
   full: 480, mid: 1050, keep: 1250,
   perFrame: 1,          // chunks built per frame, so a hitch is never two chunks long
@@ -376,6 +395,9 @@ export const TRAFFIC = {
   // with every other car on the street and it reads instantly.
   lane: 0.26,          // fraction of the carriageway width, off the centre
   len: 4.3, wide: 1.78, tall: 1.44,
+  // Close enough to see a wheel is a wheel. Past this a tyre is under two
+  // pixels and a dark sill says the same thing for a tenth of the triangles.
+  hero: 38, wheelR: 0.33, axle: 0.045,
   // A sixth of the fleet is a van or a bus, because a street of identical
   // saloons is as obviously repeated as a crowd of identical people.
   bigOdds: 0.17, bigLen: 8.4, bigTall: 2.9,

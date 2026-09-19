@@ -239,29 +239,44 @@ export class World {
     const g = new THREE.Group();
     g.position.set(w.west + i * w.chunk, 0, w.north + j * w.chunk);
     const meshes = [];
+    // Returns the mesh, because the props one is handed to hero.js to write
+    // into. Everything else ignores it.
     const add = (data, mat) => {
-      if (!data.tris) return;
+      if (!data.tris) return null;
       const mesh = new THREE.Mesh(geom(data), mat);
       mesh.frustumCulled = true;
       g.add(mesh); meshes.push(mesh);
       this.tris += data.tris;
+      return mesh;
     };
     if (c.terr) add(buildTerrain(c.terr, w.chunk), this.opaque);
     add(buildAreas(c.area, this.names.area, false), this.opaque);
     add(buildRoads(c.road, this.names.road, lod), this.opaque);
     add(buildBuildings(c.bldg, this.names.building, lod), this.opaque);
-    if (lod === 'full' || lod === 'mid') add(buildProps(c.prop, this.names.prop, lod), this.opaque);
+    // WITH RANGES: the triangle span each prop owns, so hero.js can swap one
+    // of them for a better model without rebuilding the chunk. Costs one
+    // Int32Array of 2n and nothing at all if nothing ever asks.
+    let propGeo = null, ranges = null;
+    if (lod === 'full' || lod === 'mid') {
+      const d = buildProps(c.prop, this.names.prop, lod, true);
+      const m = add(d, this.opaque);
+      if (m) { propGeo = m.geometry; ranges = d.ranges; }
+    }
     if (c.shop && c.shop.length) add(buildShops(c.shop, this.names.shop), this.opaque);
     if (c.sign && c.sign.length) add(buildStreetSigns(c.sign), this.opaque);
     add(buildAreas(c.area, this.names.area, true), this.water);
     this.root.add(g);
-    this.live.set(id, { group: g, lod, meshes, raw, shops: c.shop, sign: c.sign,
+    this.live.set(id, { id, group: g, lod, meshes, raw, shops: c.shop, sign: c.sign,
+                        props: c.prop, propGeo, ranges,
                         ox: g.position.x, oz: g.position.z });
     this.ground.addChunk(i, j, c, this.names);
     this.pending.delete(id);
   }
 
   drop(id, rec, keepRaw) {
+    // Anything holding a range into this chunk's buffers -- hero.js -- needs
+    // to know they are gone rather than discovering it by writing into them.
+    rec.dead = true;
     this.root.remove(rec.group);
     for (const m of rec.meshes) { m.geometry.dispose(); this.tris -= m.geometry.attributes.position.count / 3; }
     this.live.delete(id);

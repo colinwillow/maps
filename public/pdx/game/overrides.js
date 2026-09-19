@@ -23,6 +23,23 @@
 //
 // `keep` lets a layer survive inside the box -- `["road"]` for a model that is
 // only the superstructure and still wants the generated deck to walk on.
+//
+// AND A MODEL CAN HAVE LEVELS. `model` is the far one; `near` is a heavier
+// version with a distance to swap at:
+//
+//   "Wells Fargo Center": {
+//     "model": "models/wells-fargo.glb",
+//     "near":  { "model": "models/wells-fargo-hi.glb", "within": 180 }
+//   }
+//
+// THIS IS THE ONE PLACE `THREE.LOD` WOULD ACTUALLY FIT -- a landmark IS an
+// Object3D -- and it is still not used, for two reasons. The heavy model has
+// to be FETCHED, and `THREE.LOD` wants every level in hand before it can
+// switch; a hundred-megabyte hero building downloaded at boot for something
+// you may never walk past is the opposite of the point. And the swap wants to
+// be hysteretic -- in at `within`, out at `within * 1.15` -- or a landmark you
+// are standing exactly at the edge of loads and unloads on alternate frames.
+// Both are a dozen lines here and neither is expressible there.
 
 import * as THREE from 'three';
 import { GLTFLoader } from '../vendor/GLTFLoader.js';
@@ -53,6 +70,9 @@ export class Overrides {
         z: o.z !== undefined ? o.z : (L ? L.z : 0),
         yaw: o.yaw || 0, scale: o.scale || 1,
         clear, keep: new Set(o.keep || []),
+        near: o.near && o.near.model
+          ? { model: o.near.model, within: o.near.within || 150, state: 'idle' }
+          : null,
       });
     }
     this.boxes = this.list.filter((o) => o.clear);
@@ -156,4 +176,58 @@ export class Overrides {
     }
     return ok;
   }
+
+  /**
+   * Swap a landmark for its detailed model when you get close to it.
+   *
+   * FETCHED ON APPROACH, KEPT ONCE FETCHED. The download is the expensive part
+   * and it happens at most once per landmark per session; after that the swap
+   * is two `visible` flags, which is free. Dropping the heavy model again when
+   * you walk away would mean re-downloading it every time you cross the same
+   * street, and a landmark you are meant to walk around is exactly the thing
+   * you cross the same street at.
+   *
+   * THE SWAP IS HYSTERETIC. In at `within`, out at `within * OUT` -- standing
+   * at exactly the boundary otherwise loads and unloads on alternate frames,
+   * which on a phone is a stutter with no visible cause.
+   */
+  step(px, pz, base) {
+    if (!this.group) return;
+    for (const o of this.list) {
+      const n = o.near;
+      if (!n) continue;
+      const d = Math.hypot(o.x - px, o.z - pz);
+      const want = n.object ? d < n.within * OUT : d < n.within;
+      if (want && n.state === 'idle') {
+        n.state = 'loading';
+        const loader = new GLTFLoader();
+        loader.load(new URL(n.model, base).href, (gltf) => {
+          const m = gltf.scene;
+          m.position.set(o.x, o.y, o.z);
+          m.rotation.y = o.yaw;
+          m.scale.setScalar(o.scale);
+          m.traverse((k) => { if (k.isMesh) k.frustumCulled = false; });
+          m.visible = false;
+          this.group.add(m);
+          n.object = m; n.state = 'ready';
+        }, null, (e) => {
+          // A detail model that will not load leaves the far one standing,
+          // which is the whole reason there are two. It says so once and is
+          // never asked for again.
+          n.state = 'failed';
+          if (window.__crash) window.__crash(`override "${o.key}" near (${n.model}): ${e.message || e}`);
+        });
+      }
+      if (!n.object) continue;
+      const on = want;
+      if (n.object.visible !== on) {
+        n.object.visible = on;
+        if (o.object) o.object.visible = !on;
+      }
+    }
+  }
 }
+
+// How much further than `within` you have to walk before the heavy model is
+// put away again.
+const OUT = 1.15;

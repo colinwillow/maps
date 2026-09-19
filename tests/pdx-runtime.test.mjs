@@ -13,11 +13,12 @@ import { Crowd, Pavements, figure } from '../public/pdx/game/crowd.js';
 import { buildShops, shopBoards, SignText } from '../public/pdx/game/shops.js';
 import { buildStreetSigns, streetBoards, bladeW, bladeY } from '../public/pdx/game/streets.js';
 import { Ambient, car, boat, plane, heli, prism, closed } from '../public/pdx/game/ambient.js';
-import { buildProps } from '../public/pdx/game/props.js';
+import { buildProps, oneProp } from '../public/pdx/game/props.js';
+import { Hero } from '../public/pdx/game/hero.js';
 import { Ground } from '../public/pdx/game/ground.js';
 import { Overrides } from '../public/pdx/game/overrides.js';
 import { Player } from '../public/pdx/game/player.js';
-import { MOVE, AIR } from '../public/pdx/game/tune.js';
+import { MOVE, AIR, HERO, PROP as PROPS } from '../public/pdx/game/tune.js';
 
 const DATA = path.resolve('public/pdx/data');
 const M = JSON.parse(fs.readFileSync(path.join(DATA, 'manifest.json'), 'utf8'));
@@ -844,3 +845,144 @@ function fakeSignText() {
   globalThis.document = { createElement: () => ({ getContext: () => ctx }) };
   return new SignText({ add() {} });
 }
+
+describe('per-prop LOD', () => {
+  // The whole trick is taking ONE prop out of a merged buffer without
+  // rebuilding it. If the collapse silently fails, the city looks fine and
+  // every hero prop is drawn TWICE, low version inside high -- which is
+  // invisible on a tree and reads as a dark slab inside a car. Nothing about
+  // the draw count or the triangle count says so, because both go up either
+  // way.
+  const [ci, cj] = chunkOf(M.spawn.x, M.spawn.z);
+  const raw = read(ci, cj);
+
+  const rec = () => {
+    const d = buildProps(raw.prop, NAMES.prop, 'full', true);
+    const geo = { attributes: { position: {
+      array: Float32Array.from(d.position), needsUpdate: false,
+      addUpdateRange() {} } } };
+    return { id: `${ci},${cj}`, lod: 'full', props: raw.prop, ranges: d.ranges,
+             propGeo: geo, ox: W.west + ci * W.chunk, oz: W.north + cj * W.chunk,
+             original: Float32Array.from(d.position) };
+  };
+
+  it('records a triangle span for every prop, covering the whole buffer', () => {
+    const d = buildProps(raw.prop, NAMES.prop, 'full', true);
+    expect(d.ranges.length).toBe(raw.prop.n * 2);
+    let at = 0;
+    for (let i = 0; i < raw.prop.n; i++) {
+      // Contiguous and in order, or a collapse writes over its neighbour.
+      expect(d.ranges[i*2], `prop ${i} span does not follow the one before`).toBe(at);
+      at += d.ranges[i*2+1];
+    }
+    expect(at, 'the spans do not add up to the buffer').toBe(d.tris);
+  });
+
+  it('collapses a prop to nothing and puts it back exactly', () => {
+    const r = rec();
+    const h = new Hero({ add() {} }, THREE, NAMES.prop);
+    // Pick a prop that HAS a hero version and some triangles.
+    let idx = -1;
+    for (let i = 0; i < raw.prop.n; i++) {
+      if (HERO.on.has(NAMES.prop[raw.prop.kind[i]]) && r.ranges[i*2+1] > 4) { idx = i; break; }
+    }
+    expect(idx, 'no detailable prop in this chunk').toBeGreaterThanOrEqual(0);
+    const w = { rec: r, i: idx, name: NAMES.prop[raw.prop.kind[idx]] };
+    const at = r.ranges[idx*2] * 9, n = r.ranges[idx*2+1];
+
+    h.collapse(w);
+    const A = r.propGeo.attributes.position.array;
+    for (let t = 0; t < n; t++) {
+      const o = at + t * 9;
+      // Every triangle zero-area: a degenerate triangle is thrown away before
+      // rasterisation, which is what makes this free.
+      const ux = A[o+3]-A[o], uy = A[o+4]-A[o+1], uz = A[o+5]-A[o+2];
+      const vx = A[o+6]-A[o], vy = A[o+7]-A[o+1], vz = A[o+8]-A[o+2];
+      const area = Math.hypot(uy*vz - uz*vy, uz*vx - ux*vz, ux*vy - uy*vx);
+      expect(area, 'a collapsed triangle still has area').toBeLessThan(1e-9);
+    }
+    // AND NOT AT THE ORIGIN. A degenerate triangle still counts toward a
+    // bounding sphere, so parking every hidden prop at (0,0,0) grows the
+    // chunk's sphere to the middle of the city and turns its frustum culling
+    // off in every direction at once.
+    expect(Math.abs(A[at]) + Math.abs(A[at+2]),
+      'collapsed to the origin').toBeGreaterThan(1);
+
+    // Nothing outside the span moved.
+    for (let k = 0; k < at; k++) expect(A[k]).toBe(r.original[k]);
+    for (let k = at + n * 9; k < A.length; k++) expect(A[k]).toBe(r.original[k]);
+
+    h.restore(w);
+    for (let k = at; k < at + n * 9; k++)
+      expect(A[k], `vertex ${k} came back different`).toBeCloseTo(r.original[k], 4);
+  });
+
+  it('never double-draws: a chunk rebuilt under a hero is collapsed again', () => {
+    // `chunk:index` names the same prop in the old buffer and the new one, so
+    // a set diff on the key alone decides nothing changed and the prop is
+    // never collapsed in the fresh buffer -- drawn low AND hero, in the same
+    // place, for as long as you stand there.
+    const h = new Hero({ add() {} }, THREE, NAMES.prop);
+    const a = rec();
+    h.step(99, a.ox + a.props.pos[0], a.oz + a.props.pos[1], [a]);
+    expect(h.on.size, 'nothing was picked').toBeGreaterThan(0);
+    const b = rec();                                   // same chunk, new buffer
+    b.id = a.id;
+    a.dead = true;
+    h.step(99, b.ox + b.props.pos[0], b.oz + b.props.pos[1], [b]);
+    for (const [, w] of h.on) {
+      expect(w.rec, 'a hero still points at the dropped buffer').toBe(b);
+      const at = b.ranges[w.i*2] * 9, n = b.ranges[w.i*2+1];
+      const A = b.propGeo.attributes.position.array;
+      let moved = 0;
+      for (let k = at; k < at + n * 9; k++) if (A[k] !== b.original[k]) moved++;
+      expect(moved, `prop ${w.i} was not collapsed in the new buffer`).toBeGreaterThan(0);
+    }
+  });
+
+  it('every hero prop encloses a POSITIVE volume', () => {
+    // The divergence theorem again. A hero car is where the wheels are, and a
+    // wheel is the first closed cylinder in this file -- inside out it still
+    // renders and is simply lit from within, which on a tyre looks like a tyre.
+    for (const name of HERO.on) {
+      const look = PROPS[name];
+      if (!look) continue;
+      const s = new Soup(512);
+      oneProp(s, name, look, 0, 0, 0, 1, 0.6, 2, 2);
+      const g = s.done();
+      expect(g.tris, `${name} has no hero version`).toBeGreaterThan(10);
+      let v = 0;
+      for (let t = 0; t < g.tris; t++) {
+        const i = t * 9, P = g.position;
+        v += (P[i]   * (P[i+4]*P[i+8] - P[i+5]*P[i+7])
+            + P[i+1] * (P[i+5]*P[i+6] - P[i+3]*P[i+8])
+            + P[i+2] * (P[i+3]*P[i+7] - P[i+4]*P[i+6])) / 6;
+        expect(Number.isFinite(g.normal[i]), `${name} has a degenerate face`).toBe(true);
+      }
+      expect(v, `the hero ${name} is inside out`).toBeGreaterThan(0);
+    }
+  });
+
+  it('a hero prop is heavier than the one it replaces, and a full set still fits', () => {
+    let worst = 0;
+    for (const name of HERO.on) {
+      const look = PROPS[name];
+      if (!look) continue;
+      const lo = new Soup(256), hi = new Soup(512);
+      oneProp(lo, name, look, 0, 0, 0, 1, 0.6, 2, 1);
+      oneProp(hi, name, look, 0, 0, 0, 1, 0.6, 2, 2);
+      const a = lo.done().tris, b = hi.done().tris;
+      expect(b, `the hero ${name} is not actually more detailed`).toBeGreaterThan(a);
+      worst = Math.max(worst, b);
+    }
+    // A BUDGET IN TRIANGLES, NOT A RATIO. The ratio is the wrong number to
+    // pin: a plain car is thirty triangles and a plain tree fourteen, so the
+    // same absolute cost reads as 14x on one and 30x on the other, and a test
+    // written on it fails for the kind that started cheapest rather than for
+    // the one that got expensive. What matters is that a FULL SET fits: 44 of
+    // the heaviest kind is the worst this can ever cost, against a frame that
+    // is already drawing six hundred thousand.
+    expect(worst * HERO.count, `a full hero set is ${worst * HERO.count} triangles`)
+      .toBeLessThan(26000);
+  });
+});

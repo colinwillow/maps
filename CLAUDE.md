@@ -290,6 +290,85 @@ Landmines already paid for here:
   merely TOUCHED a clear box lost every shopfront in it — five hundred metres
   of signage gone because a bridge two streets away has an override.
 
+## LOD, and why `THREE.LOD` is used for exactly one thing
+
+There are three kinds of detail switch here and they need three different
+mechanisms, because they are switching three different things.
+
+**1. Chunks** (`STREAM.full` / `STREAM.mid`). A whole 500 m square is built at
+one of two levels and rebuilt when it crosses the boundary. Coarse, already
+there, and it is what stops the far half of the city costing anything.
+
+**2. Props** (`game/hero.js`, `HERO`). The nearest ~44 trees, lamps, benches
+and parked cars are swapped for a better version of themselves — a car gets
+round tyres, a glasshouse, mirrors and lights; a tree gets a tapering trunk,
+boughs and three overlapping crowns.
+
+**`THREE.LOD` cannot do this and it is not close.** That class switches between
+children of one Object3D by distance, and there is no Object3D to attach it to:
+six hundred props in a chunk are ONE buffer and ONE draw call, which is the
+whole reason this renderer is fast. Giving each prop its own object to hang
+levels off is six hundred draw calls a chunk to improve a dozen of them.
+
+So the swap happens INSIDE the buffer:
+
+* `buildProps` records `ranges` — the triangle span each prop occupies.
+* To take one out, every vertex in its span is written to a SINGLE POINT. Each
+  of its triangles becomes zero-area, and a degenerate triangle is discarded
+  before rasterisation on every GPU worth the name, so it costs the draw call
+  nothing. **Collapsed to a point the prop is actually at, never the origin** —
+  a degenerate triangle still counts toward a bounding sphere, and parking
+  every hidden prop at (0,0,0) grows the chunk's sphere to the middle of the
+  city and turns its frustum culling off in every direction at once.
+* To put it back, `oneProp` rebuilds it from the chunk's own record. **Nothing
+  is cached**: keeping the original vertices would be a second copy of every
+  prop buffer in the city, and `oneProp` is a pure function of the record.
+* **A KEY IS NOT ENOUGH — THE RECORD HAS TO BE THE SAME RECORD.** A chunk that
+  crosses the LOD boundary is dropped and rebuilt with a fresh buffer, and
+  `chunk:index` names the same prop in both. A set diff on the key alone
+  decides nothing changed, never collapses it in the new buffer, and the car is
+  then drawn twice — low inside hero, in the same place, for as long as you
+  stand there. Pinned by a test.
+* The budget is **triangles, not a ratio**. A plain car is 30 triangles and a
+  plain tree 14, so the same absolute cost reads as 14× on one and 30× on the
+  other; a test written on the ratio fails for whichever kind started cheapest.
+  What is pinned is that a FULL SET fits: 44 of the heaviest kind, against a
+  frame already drawing six hundred thousand. Measured on Burnside: 36 heroes,
+  11k triangles, **one extra draw call**.
+* Moving traffic needs none of this — `ambient.js` rebuilds it every frame
+  anyway — so a car within `TRAFFIC.hero` simply gets wheels, and they TURN.
+  **The spoke is the whole point there**: a tyre is rotationally symmetric, so
+  a black disc spinning and a black disc standing still are the same picture,
+  and the rotation only exists on screen if something on the wheel is not.
+* **A tyre is not black, it is dark grey that catches light.** At 26/26/28 on a
+  road at 46/46/48 the wheel was invisible and what read was the hub — one pale
+  sliver poking out of nothing, which is what a car on castors looks like.
+* **Every height in a hero prop is a fraction of the prop**, because the low
+  versions have fixed heights and a scaled LENGTH. That is invisible under a
+  dark sill and is not invisible once there are wheels: at `scale` 0.7 the body
+  sat above the top of the tyre and the car came out on castors, and at 1.5 the
+  wheels vanished inside it.
+
+**3. Landmarks** (`overrides.js`). A hand-built model with a heavier version:
+
+```json
+"Wells Fargo Center": {
+  "model": "models/wells-fargo.glb",
+  "near":  { "model": "models/wells-fargo-hi.glb", "within": 180 }
+}
+```
+
+This is the one place `THREE.LOD` would genuinely fit — a landmark IS an
+Object3D — and it is still not used, for two reasons. The heavy model has to be
+FETCHED, and `THREE.LOD` wants every level in hand before it can switch; a
+hundred-megabyte hero building downloaded at boot for something you may never
+walk past is the opposite of the point. And the swap wants hysteresis — in at
+`within`, out at `within * 1.15` — or a landmark you are standing at the edge
+of loads and unloads on alternate frames. Both are a dozen lines in
+`Overrides.step` and neither is expressible there. **Fetched on approach, kept
+once fetched**: walking away and dropping it means re-downloading every time
+you cross the same street, which is exactly what you do around a landmark.
+
 ## Still to do
 
 * **Traffic does not obey anything.** No junctions, no signals, no queueing —
@@ -300,7 +379,10 @@ Landmines already paid for here:
 * **The hand-built landmark slot is empty.** Nothing is overridden yet; the
   machinery, the clear boxes and the tests are there waiting for the first GLB.
 * **No LOD on props past `STREAM.mid`** — they are simply dropped. A billboard
-  impostor for distant trees is the obvious next thing.
+  impostor for distant trees is the obvious next thing, and it is the one end
+  of the range `hero.js` does not touch.
+* **No hand-built landmark has been made yet**, so the `near` half of an
+  override has machinery and a test and no asset to prove it on.
 * **The play area is 5 km square.** `city.py` moves it or grows it; the fetch
   and the bbox index are cached, so a bigger bake costs only its own row groups.
 * **Colin has no idle variety, no jump animation blend-out, and no shadow.**

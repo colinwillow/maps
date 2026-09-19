@@ -19,6 +19,7 @@ import { SignText, shopBoards } from './shops.js';
 import { streetBoards } from './streets.js';
 import { Crowd } from './crowd.js';
 import { Ambient } from './ambient.js';
+import { Hero } from './hero.js';
 import { CAM, MOVE, SKY, STREAM } from './tune.js';
 
 const BUILD = 'p1';
@@ -63,7 +64,7 @@ addEventListener('resize', resize);
 resize();
 
 let world, ground, player, camera, colin, sticks, manifest, places = null, ov = null;
-let signs = null, crowd = null, ambient = null;
+let signs = null, crowd = null, ambient = null, hero = null;
 let running = false, last = 0, fps = 0, frames = 0, fpsT = 0, hudT = 0;
 let dbg = 0;
 
@@ -83,6 +84,7 @@ let dbg = 0;
 
     signs = new SignText(scene);
     crowd = new Crowd(scene, THREE);
+    hero = new Hero(scene, THREE, manifest.classes.prop);
 
     boot('the skyline', 0.1);
     const nfar = await world.loadFar();
@@ -167,6 +169,11 @@ function frame(now) {
   if (signs) signs.update(dt, player.x, player.z, world.loaded(), collectBoards);
   if (crowd) crowd.step(dt, player.x, player.z, world.loaded(), manifest.classes.road);
   if (ambient) ambient.step(dt, player.x, player.y, player.z, world.loaded(), manifest.classes.road);
+  // AFTER world.update, which is what creates and drops the chunk buffers it
+  // writes into -- a hero holding a range in a geometry that was disposed on
+  // the same frame writes into nothing, and does it silently.
+  if (hero) hero.step(dt, player.x, player.z, world.loaded());
+  if (ov) ov.step(player.x, player.z, DATA);
 
   if (colin) {
     colin.root.position.set(player.x, player.y, player.z);
@@ -252,6 +259,7 @@ q('mapWrap').onclick = () => { q('mapWrap').classList.remove('on'); q('mapHint')
 window.pdx = { get player() { return player; }, get world() { return world; },
                get ground() { return ground; }, get camera() { return camera; },
                get ambient() { return ambient; },
+               get hero() { return hero; },
                get signs() { return signs; },
                THREE, scene, renderer,
                // Teleporting has to land you OUTSIDE. Dropped straight onto a
