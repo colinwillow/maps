@@ -56,4 +56,34 @@ def read(path):
             L.append(dict(kind=kind, yaw=yaw/256*6.283185, scale=0.5+sc/255*1.5,
                           tint=tint, x=x/10, z=z/10, y=y/10))
         out["prop"] = L
+    # ONE name table, SHARED by SHOP and SGNS. Reading it once here is also the
+    # check that the writer built it once: two sections indexing two tables
+    # would still decode, and would decode the wrong strings.
+    names = []
+    if "NAME" in secs:
+        off, ln, n = secs["NAME"]; p = off
+        for _ in range(n):
+            k = b[p]; p += 1
+            names.append(b[p:p+k].decode("utf-8")); p += k
+    out["name"] = names
+    if "SHOP" in secs:
+        off, ln, n = secs["SHOP"]; p = off; L = []
+        for _ in range(n):
+            cat, flags, yaw, w4 = struct.unpack_from("<BBBB", b, p); p += 4
+            x, z, y, h = struct.unpack_from("<hhhh", b, p); p += 8
+            ni, = struct.unpack_from("<H", b, p); p += 2
+            L.append(dict(cat=cat, flags=flags, yaw=yaw/256*6.283185, w=w4/4.0,
+                          x=x/10, z=z/10, y=y/10, h=h/10,
+                          name=names[ni] if ni < len(names) else ""))
+        out["shop"] = L
+    if "SGNS" in secs:
+        off, ln, n = secs["SGNS"]; p = off; L = []
+        for _ in range(n):
+            flags, yaw = struct.unpack_from("<BB", b, p); p += 2
+            x, z, y = struct.unpack_from("<hhh", b, p); p += 6
+            ni, = struct.unpack_from("<H", b, p); p += 2
+            L.append(dict(post=flags & 1, blade=(flags >> 1) & 1,
+                          yaw=yaw/256*6.283185, x=x/10, z=z/10, y=y/10,
+                          name=names[ni] if ni < len(names) else ""))
+        out["sign"] = L
     return out

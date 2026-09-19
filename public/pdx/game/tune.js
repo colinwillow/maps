@@ -272,8 +272,44 @@ export const SIGN = {
   // read from across the street; more slots means smaller type and a sign you
   // cannot read is a sign that may as well be blank.
   atlas: 1024, cols: 4, rows: 12,
-  range: 85,           // metres within which a name is drawn at all
+  range: 85,           // metres within which a shop name is drawn at all
   every: 0.45,         // seconds between re-checks of the nearest set
+  // A CELL IS KEYED ON THE TEXT, NOT ON THE SIGN. There are 435 distinct street
+  // names in the whole city and a junction has the same one on both its
+  // corners, so "SE HAWTHORNE BLVD" is drawn into the atlas ONCE and every
+  // blade that says it is a quad into that one cell. Which is why there are
+  // far more quads than there are slots.
+  quads: 220,
+};
+
+// Street name blades: a post on a corner with a green rectangle on it saying
+// what the street is. This is the cheapest legibility in the whole city --
+// 2,275 junctions, no model authored for any of them, and the names are the
+// one thing a generator cannot invent.
+export const STREETSIGN = {
+  // OVERSIZED ON PURPOSE, about half again life size. A real Portland blade is
+  // 23 cm deep with 10 cm lettering, and measured at a natural walking
+  // distance that comes out at the very edge of legible -- which fails the one
+  // thing this exists for, which is being able to read "BURNSIDE" from where
+  // you are standing rather than from the corner itself. Accurate and useless
+  // is worse than large and readable; the money brick in Shredworld is the
+  // same call for the same reason.
+  postH: 3.05, postR: 0.058, post: 0x4b5450,
+  bladeH: 0.40, bladeT: 0.04, drop: 0.46,    // the second blade sits under the first
+  // MUTCD green with white lettering, which is what a Portland blade is. The
+  // border is what makes it read as a sign at distance rather than as a green
+  // smear: a plain rectangle of one colour is a shape, a rectangle with a line
+  // inside it is a sign.
+  face: 0x17603c, edge: 0xe8efe8, ink: '#f4f8f4', border: 0.030,
+  // MEASURED OFF A REAL BLADE, not eyeballed: a Portland street sign is about
+  // 75 cm of green for "NW 4TH AVE" and 1.1 m for "SE HAWTHORNE BLVD", which
+  // is a condensed capital about 6 cm wide at a 10 cm cap height.
+  charW: 0.095, pad: 0.25, minW: 0.92, maxW: 2.50,
+  // Further than a shop's, because a street sign is the thing you go LOOKING
+  // for -- the answer to "which way is Burnside" has to arrive before you have
+  // walked to the corner to ask.
+  range: 120,
+  bias: 0.55,          // how much nearer than its metres a blade ranks
 };
 
 // How far the world is live. These are the frame budget: at 500 m a chunk,

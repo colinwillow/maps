@@ -15,7 +15,8 @@ import { Camera } from './camera.js';
 import { loadColin, animate } from './character.js';
 import { makeSky } from './sky.js';
 import { Overrides } from './overrides.js';
-import { SignText } from './shops.js';
+import { SignText, shopBoards } from './shops.js';
+import { streetBoards } from './streets.js';
 import { Crowd } from './crowd.js';
 import { Ambient } from './ambient.js';
 import { CAM, MOVE, SKY, STREAM } from './tune.js';
@@ -163,7 +164,7 @@ function frame(now) {
   camera.step(dt, player, lk, ground);
   player.step(dt, ground, mv, camera.az, sticks.jump());
   world.update(player.x, player.z);
-  if (signs) signs.update(dt, player.x, player.z, world.loaded(), manifest.classes.shop);
+  if (signs) signs.update(dt, player.x, player.z, world.loaded(), collectBoards);
   if (crowd) crowd.step(dt, player.x, player.z, world.loaded(), manifest.classes.road);
   if (ambient) ambient.step(dt, player.x, player.y, player.z, world.loaded(), manifest.classes.road);
 
@@ -179,6 +180,13 @@ function frame(now) {
   if (fpsT > 0.5) { fps = frames / fpsT; frames = 0; fpsT = 0; }
   hudT += dt;
   if (hudT > 0.25) { hudT = 0; hud(); }
+}
+
+// ONE atlas for every name in the world. Shopfronts and street blades both push
+// into it, neither knows the other exists, and the whole lot is one draw call.
+function collectBoards(rec, px, pz, out) {
+  shopBoards(rec, px, pz, out, manifest.classes.shop);
+  streetBoards(rec, px, pz, out);
 }
 
 function hud() {
@@ -244,6 +252,7 @@ q('mapWrap').onclick = () => { q('mapWrap').classList.remove('on'); q('mapHint')
 window.pdx = { get player() { return player; }, get world() { return world; },
                get ground() { return ground; }, get camera() { return camera; },
                get ambient() { return ambient; },
+               get signs() { return signs; },
                THREE, scene, renderer,
                // Teleporting has to land you OUTSIDE. Dropped straight onto a
                // coordinate you are as likely as not inside a building, and a

@@ -74,7 +74,50 @@ export function buildShops(list, classNames) {
 }
 
 /**
- * The readable part. One canvas, one material, one mesh, one draw call.
+ * Text boards for the shops in range, for the shared atlas.
+ *
+ * One quad each: a shopfront is on a wall and there is nothing behind it to
+ * read it from.
+ */
+export function shopBoards(rec, px, pz, out, classNames) {
+  const list = rec.shops;
+  if (!list || !list.length) return;
+  const r2 = SIGN.range * SIGN.range;
+  for (const sh of list) {
+    if (!sh.name) continue;
+    const x = rec.ox + sh.x, z = rec.oz + sh.z;
+    const d = (x - px) ** 2 + (z - pz) ** 2;
+    if (d > r2) continue;
+    const look = SHOP[classNames[sh.cat]] || SHOP_DEFAULT;
+    const fx = Math.sin(sh.yaw), fz = -Math.cos(sh.yaw);
+    const rx = -fz, rz = fx;
+    const hw = sh.w * 0.5 * 0.94, bh = SIGN.boardH * 0.5 * 0.82;
+    const y = sh.y + sh.h, out_ = 0.10;
+    const P = (a, up) => [x + rx*a + fx*out_, y + up, z + rz*a + fz*out_];
+    out.push({
+      score: Math.sqrt(d), name: sh.name, ink: look.ink,
+      // U RUNS BACKWARDS ALONG THE BOARD, and that is not a typo.
+      // `(rx, rz) = (-fz, fx)` is the board's own right-hand vector, but a
+      // reader STANDS IN FRONT of the sign looking back along -f, and their
+      // right is the other way: facing south with up +Y, right is west.
+      // Mapped straight across, every shop name in Portland read backwards.
+      // Anticlockwise from the READER'S bottom left. Their right is the
+      // NEGATIVE of the board's own `a` axis -- facing south with up +Y, right
+      // is west -- so `+hw` is where their eye starts, not `-hw`.
+      quads: [[P(hw, -bh), P(-hw, -bh), P(-hw, bh), P(hw, bh)]],
+    });
+  }
+}
+
+/**
+ * Every readable name in the world: one canvas, one material, one draw call.
+ *
+ * IT IS NOT ONE CELL PER SIGN, IT IS ONE CELL PER STRING. A junction has
+ * "SE HAWTHORNE BLVD" on both its corners and the next junction along has it
+ * again; drawing that into its own atlas cell each time spends the whole atlas
+ * on four copies of one street. Cells are keyed on the text and the ink, so a
+ * name that repeats costs one cell however many boards say it -- which is what
+ * lets 48 cells carry a street of shops AND every blade around it.
  */
 export class SignText {
   constructor(scene) {
@@ -89,8 +132,10 @@ export class SignText {
     this.tex.colorSpace = THREE.SRGBColorSpace;
     this.tex.anisotropy = 4;
     this.geo = new THREE.BufferGeometry();
-    this.pos = new Float32Array(this.slots * 6 * 3);
-    this.uv = new Float32Array(this.slots * 6 * 2);
+    // Quads, not slots: a cell is shared by every board that says the same
+    // thing, so there are far more quads on screen than there are cells.
+    this.pos = new Float32Array(SIGN.quads * 6 * 3);
+    this.uv = new Float32Array(SIGN.quads * 6 * 2);
     this.geo.setAttribute('position', new THREE.BufferAttribute(this.pos, 3));
     this.geo.setAttribute('uv', new THREE.BufferAttribute(this.uv, 2));
     this.geo.setDrawRange(0, 0);
@@ -102,81 +147,153 @@ export class SignText {
     scene.add(this.mesh);
     this.key = '';
     this.t = 0;
+    this.cells = 0;
   }
 
-  /** Nearest `slots` shops within range, redrawn only when the SET changes. */
-  update(dt, px, pz, live, classNames) {
+  /**
+   * Gather every board in range, keep the best, redraw only when the SET of
+   * STRINGS changes.
+   *
+   * `collect` is handed the list and pushes whatever it owns, which is how one
+   * atlas serves shopfronts and street blades without either knowing the other
+   * exists.
+   */
+  update(dt, px, pz, live, collect) {
     this.t += dt;
     if (this.t < SIGN.every) return;
     this.t = 0;
-    const near = [];
-    const r2 = SIGN.range * SIGN.range;
-    for (const rec of live) {
-      const { shops, ox, oz } = rec;
-      if (!shops || !shops.length) continue;
-      for (const sh of shops) {
-        const x = ox + sh.x, z = oz + sh.z;
-        const d = (x - px) ** 2 + (z - pz) ** 2;
-        if (d < r2 && sh.name) near.push({ d, sh, x, z });
+    const boards = [];
+    for (const rec of live) collect(rec, px, pz, boards);
+    boards.sort((a, b) => a.score - b.score);
+
+    // Allocate cells in that order. A board whose string is already in the
+    // atlas is free, so the cut is made on CELLS and on QUADS -- not on the
+    // number of boards, which is what lets a street of blades all saying
+    // "SE HAWTHORNE BLVD" cost one cell between them.
+    const cell = new Map();
+    const keep = [];
+    let quads = 0;
+    for (const b of boards) {
+      const k = b.name + '\u0000' + b.ink;
+      let ci = cell.get(k);
+      if (ci === undefined) {
+        if (cell.size >= this.slots) continue;
+        ci = cell.size;
+        cell.set(k, ci);
       }
+      if (quads + b.quads.length > SIGN.quads) continue;
+      quads += b.quads.length;
+      keep.push({ b, ci });
     }
-    near.sort((a, b) => a.d - b.d);
-    near.length = Math.min(near.length, this.slots);
-    const key = near.map((n) => n.sh.name).join('|');
-    if (key === this.key) return;
+    const key = [...cell.keys()].join('|') + '#' + keep.length;
+    if (key === this.key) { this.place(keep); return; }
     this.key = key;
-    this.draw(near, classNames);
+    this.cells = cell.size;
+    this.paint([...cell.keys()]);
+    this.place(keep);
   }
 
-  draw(near, classNames) {
+  /**
+   * One string per cell, and the INK IS MEASURED, not assumed to fill it.
+   *
+   * A cell is 256 x 85 and a street blade is 1.0 x 0.19 m. Mapping the whole
+   * cell onto the whole board stretches every letter to the ratio between
+   * those two, which came out 1.7x wide -- legible, and plainly wrong, and
+   * wrong differently for every name because the font is shrunk to fit. What
+   * is stored instead is the box the glyphs actually occupy and the shape of
+   * it, and `place` fits that shape inside whatever space the board offers.
+   */
+  paint(keys) {
     const S = SIGN.atlas, cw = S / this.cols, ch = S / this.rows;
     const g = this.ctx;
     g.clearRect(0, 0, S, S);
     g.textAlign = 'center';
     g.textBaseline = 'middle';
-    for (let i = 0; i < near.length; i++) {
-      const col = i % this.cols, row = (i / this.cols) | 0;
-      const look = SHOP[classNames[near[i].sh.cat]] || SHOP_DEFAULT;
+    this.cell = [];
+    for (let i = 0; i < keys.length; i++) {
+      const cut = keys[i].indexOf('\u0000');
+      const name = keys[i].slice(0, cut);
       // Ink chosen against the board it sits on, not a fixed white: a cream
-      // awning with white lettering is a blank awning.
-      g.fillStyle = look.ink;
-      let size = Math.round(ch * 0.46);
-      const name = near[i].sh.name;
-      g.font = `700 ${size}px 'Barlow Condensed','Arial Narrow',system-ui,sans-serif`;
-      while (g.measureText(name).width > cw * 0.92 && size > 10) {
-        size -= 2;
-        g.font = `700 ${size}px 'Barlow Condensed','Arial Narrow',system-ui,sans-serif`;
+      // awning with white lettering is a blank awning, and a green street
+      // blade with dark lettering is a green smear.
+      g.fillStyle = keys[i].slice(cut + 1);
+      let size = Math.round(ch * 0.62);
+      const font = (n) => `700 ${n}px 'Barlow Condensed','Arial Narrow',system-ui,sans-serif`;
+      g.font = font(size);
+      let m = g.measureText(name);
+      while (m.width > cw * 0.94 && size > 9) {
+        size -= 1;
+        g.font = font(size);
+        m = g.measureText(name);
       }
-      g.fillText(name, col * cw + cw / 2, row * ch + ch / 2);
+      const col = i % this.cols, row = (i / this.cols) | 0;
+      const cx = col * cw + cw / 2, cy = row * ch + ch / 2;
+      g.fillText(name, cx, cy);
+      // The real ink box. `actualBoundingBox*` is exact where the em box is a
+      // guess, and the two differ by most of a line on a condensed face.
+      const pad = 1.5;
+      const x0 = cx - (m.actualBoundingBoxLeft || m.width / 2) - pad;
+      const x1 = cx + (m.actualBoundingBoxRight || m.width / 2) + pad;
+      const y0 = cy - (m.actualBoundingBoxAscent || size * 0.72) - pad;
+      const y1 = cy + (m.actualBoundingBoxDescent || 0) + pad;
+      this.cell.push({
+        u0: x0 / S, u1: x1 / S, v0: 1 - y1 / S, v1: 1 - y0 / S,
+        aspect: (x1 - x0) / Math.max(1, y1 - y0),
+      });
     }
     this.tex.needsUpdate = true;
+  }
 
-    let v = 0, u = 0;
-    for (let i = 0; i < near.length; i++) {
-      const { sh, x, z } = near[i];
-      const fx = Math.sin(sh.yaw), fz = -Math.cos(sh.yaw);
-      const rx = -fz, rz = fx;
-      const hw = sh.w * 0.5 * 0.94, bh = SIGN.boardH * 0.5 * 0.82;
-      const y = sh.y + sh.h, d = 0.10;
-      const P = (a, up) => [x + rx*a + fx*d, y + up, z + rz*a + fz*d];
-      const A = P(-hw, -bh), B = P(hw, -bh), C = P(hw, bh), D = P(-hw, bh);
-      const col = i % this.cols, row = (i / this.cols) | 0;
-      // U RUNS BACKWARDS ALONG THE BOARD, and that is not a typo.
-      // `(rx, rz) = (-fz, fx)` is the board's own right-hand vector, but a
-      // reader STANDS IN FRONT of the sign looking back along -f, and their
-      // right is the other way: facing south with up +Y, right is west. Mapped
-      // straight across, every shop name in Portland read backwards.
-      const u1 = col / this.cols, u0 = (col + 1) / this.cols;
-      const t0 = 1 - (row + 1) / this.rows, t1 = 1 - row / this.rows;
-      const push = (p, uu, vv) => {
-        this.pos[v++] = p[0]; this.pos[v++] = p[1]; this.pos[v++] = p[2];
-        this.uv[u++] = uu; this.uv[u++] = vv;
-      };
-      push(A, u0, t0); push(B, u1, t0); push(C, u1, t1);
-      push(A, u0, t0); push(C, u1, t1); push(D, u0, t1);
+  /**
+   * The quads. Rebuilt every tick -- the boards move as he walks.
+   *
+   * A BOARD GIVES THE SPACE AVAILABLE, NOT THE QUAD. Its corners are A, B, C,
+   * D anticlockwise from the READER'S BOTTOM LEFT -- which is the one rule
+   * every producer here has to get right, and getting it backwards writes the
+   * name in mirror image. (The shop boards and the street blades genuinely
+   * disagree about which way that is: a shop's board runs along `(-fz, fx)`
+   * with its face out along `(fx, fz)`, and a blade's runs along `(fx, fz)`
+   * with its face out along `(-fz, fx)` -- a quarter turn apart, so one of
+   * them has to list its corners the other way round. Stating the rule here is
+   * what makes that a property of the board rather than a flag in the atlas.)
+   * The ink's own shape is then fitted CENTRED inside it, so a short name on a
+   * wide board is short rather than stretched.
+   */
+  place(keep) {
+    let v = 0, u = 0, n = 0;
+    for (const { b, ci } of keep) {
+      const m = this.cell && this.cell[ci];
+      if (!m) continue;
+      for (const q of b.quads) {
+        const [P0, P1, P2, P3] = q;
+        // The board's own axes and half extents.
+        const ex = [P1[0]-P0[0], P1[1]-P0[1], P1[2]-P0[2]];
+        const ey = [P3[0]-P0[0], P3[1]-P0[1], P3[2]-P0[2]];
+        const W = Math.hypot(ex[0], ex[1], ex[2]) || 1;
+        const H = Math.hypot(ey[0], ey[1], ey[2]) || 1;
+        let w = W, h = W / m.aspect;
+        if (h > H) { h = H; w = H * m.aspect; }
+        const cx = (P0[0]+P1[0]+P2[0]+P3[0]) / 4;
+        const cy = (P0[1]+P1[1]+P2[1]+P3[1]) / 4;
+        const cz = (P0[2]+P1[2]+P2[2]+P3[2]) / 4;
+        const ux = ex[0]/W, uy = ex[1]/W, uz = ex[2]/W;
+        const vx = ey[0]/H, vy = ey[1]/H, vz = ey[2]/H;
+        const C4 = (sw, sh) => [cx + ux*sw*w/2 + vx*sh*h/2,
+                                cy + uy*sw*w/2 + vy*sh*h/2,
+                                cz + uz*sw*w/2 + vz*sh*h/2];
+        const a = C4(-1, -1), bq = C4(1, -1), c = C4(1, 1), d = C4(-1, 1);
+        const push = (p, uu, vv) => {
+          this.pos[v++] = p[0]; this.pos[v++] = p[1]; this.pos[v++] = p[2];
+          this.uv[u++] = uu; this.uv[u++] = vv;
+        };
+        push(a, m.u0, m.v0); push(bq, m.u1, m.v0); push(c, m.u1, m.v1);
+        push(a, m.u0, m.v0); push(c, m.u1, m.v1); push(d, m.u0, m.v1);
+        n++;
+      }
     }
     this.geo.attributes.position.needsUpdate = true;
     this.geo.attributes.uv.needsUpdate = true;
-    this.geo.setDrawRange(0, near.length * 6);
+    this.geo.setDrawRange(0, n * 6);
+    this.quads = n;
   }
 }

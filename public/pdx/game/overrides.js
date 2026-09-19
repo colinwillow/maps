@@ -86,7 +86,13 @@ export class Overrides {
    */
   filter(c, ox, oz, size) {
     if (!this.touches(ox, oz, size)) return c;
-    const out = { terr: c.terr, area: c.area, bldg: [], road: [], prop: null };
+    // EVERY LAYER HAS TO BE CARRIED THROUGH, not just the ones with a loop.
+    // `shop` was dropped from this object entirely, so a chunk that merely
+    // TOUCHED a clear box lost every shopfront in it -- five hundred metres of
+    // signage gone because a bridge two streets away has an override. Named
+    // here, filtered below.
+    const out = { terr: c.terr, area: c.area, bldg: [], road: [], prop: null,
+                  shop: [], sign: [] };
     for (const b of c.bldg) {
       if (!this.hit('building', ox + b.ring[0], oz + b.ring[1], (b.base + b.top) / 2)) out.bldg.push(b);
     }
@@ -111,6 +117,12 @@ export class Overrides {
         p.pos[d*3+2] = c.prop.pos[src*3+2];
       });
       out.prop = p;
+    }
+    for (const sh of (c.shop || [])) {
+      if (!this.hit('shop', ox + sh.x, oz + sh.z, sh.y)) out.shop.push(sh);
+    }
+    for (const sg of (c.sign || [])) {
+      if (!this.hit('sign', ox + sg.x, oz + sg.z, sg.y)) out.sign.push(sg);
     }
     return out;
   }

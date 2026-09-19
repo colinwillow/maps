@@ -960,6 +960,142 @@ class Hash2D:
         return False
 
 
+# --------------------------------------------------------------------------
+# 5b. street name blades
+# --------------------------------------------------------------------------
+# Streets that get a name blade at their junctions. A driveway, an alley and a
+# parking aisle do not have street signs and a motorway's name belongs on a
+# gantry, not on a post at a corner.
+SIGN_ON = {"trunk", "primary", "secondary", "tertiary",
+           "residential", "unclassified", "living_street"}
+
+# What is actually painted on a Portland street blade. These are not
+# decoration: "Southwest Hawthorne Boulevard" is 31 characters and needs a
+# two-metre sign to be legible, "SW HAWTHORNE BLVD" is 17 and fits on the
+# blade the real street has. The directional prefix is the whole address
+# system here -- SE 12th and NE 12th are two miles apart -- so it is the one
+# part that must never be dropped.
+ABBR_PRE = {"northwest": "NW", "northeast": "NE", "southwest": "SW",
+            "southeast": "SE", "north": "N", "south": "S",
+            "east": "E", "west": "W"}
+ABBR_SUF = {"street": "ST", "avenue": "AVE", "boulevard": "BLVD", "drive": "DR",
+            "road": "RD", "court": "CT", "place": "PL", "lane": "LN",
+            "terrace": "TER", "parkway": "PKWY", "highway": "HWY",
+            "circle": "CIR", "alley": "ALY", "way": "WAY", "loop": "LOOP",
+            "trail": "TRL", "square": "SQ", "bridge": "BRG"}
+
+
+def abbrev(name):
+    """"Southwest Hawthorne Boulevard" -> "SW HAWTHORNE BLVD"."""
+    w = name.replace("#", "").split()
+    if not w:
+        return ""
+    if w[0].lower() in ABBR_PRE:
+        w[0] = ABBR_PRE[w[0].lower()]
+    if len(w) > 1 and w[-1].lower() in ABBR_SUF:
+        w[-1] = ABBR_SUF[w[-1].lower()]
+    return " ".join(w).upper()[:22]
+
+
+def bake_street_signs(g, centrelines, footprints, in_road):
+    """A blade per street at every junction of two DIFFERENTLY NAMED streets.
+
+    The junction is Overture's CONNECTOR, not a coinciding coordinate -- the
+    same lesson the bridge solver paid for, one system along: two streets that
+    cross at the same plan position twenty feet apart vertically are a freeway
+    stack and not a corner you can stand on.
+
+    A blade's long axis is PARALLEL TO THE STREET IT NAMES, which is how a
+    street sign works and is not an arbitrary choice: it puts the blade's face
+    square to somebody arriving along the CROSS street, which is the only
+    person who needs to read it. Mounted the other way it is edge-on to
+    everybody.
+    """
+    at = defaultdict(list)
+    for s in centrelines:
+        nm = s.get("name")
+        if not nm or s["cls"] not in SIGN_ON or not s["conn"]:
+            continue
+        pts = s["pts3"]
+        L = _arc([(p[0], p[1]) for p in pts])
+        total = L[-1] or 1.0
+        for c in s["conn"]:
+            t = c.get("at")
+            if t is None:
+                continue
+            k = int(np.argmin(np.abs(np.asarray(L) - t * total)))
+            a, b = max(k - 1, 0), min(k + 1, len(pts) - 1)
+            dx, dz = pts[b][0] - pts[a][0], pts[b][1] - pts[a][1]
+            d = math.hypot(dx, dz)
+            if d < 0.3:
+                continue
+            at[c["connector_id"]].append(
+                dict(name=nm, ux=dx / d, uz=dz / d, half=s["w"] * 0.5,
+                     x=pts[k][0], z=pts[k][1], y=pts[k][2], cls=s["cls"],
+                     bridge=s["bridge"]))
+
+    # ONE POST PER CORNER, not one per connector. A divided street carries a
+    # connector on each carriageway twenty metres apart, and a slip lane adds a
+    # third; without this every boulevard junction grows a little forest.
+    taken = Hash2D(36.0)
+    out = defaultdict(list)
+    made = no_room = 0
+    for cid, arms in at.items():
+        names = {}
+        for a in arms:
+            names.setdefault(a["name"], a)
+        if len(names) < 2:
+            continue
+        p = arms[0]
+        if not inside(p["x"], p["z"]) or taken.near(p["x"], p["z"], 32.0):
+            continue
+        # A bridge deck is not a place for a signpost: the post would stand on
+        # the water forty feet under the road it names.
+        if any(a["bridge"] for a in arms):
+            continue
+        pick = list(names.values())[:2]
+        A, Bb = pick[0], pick[1]
+        # Out of BOTH carriageways: along A by B's half width clears the cross
+        # street, and along B by A's half width clears A's own. Portland is a
+        # grid, so those two are near enough perpendicular for this to be a
+        # corner. All four corners are tried and the first clear one wins.
+        spot = None
+        for sa in (1, -1):
+            for sb in (1, -1):
+                px = p["x"] + A["ux"] * (Bb["half"] + 2.3) * sa + Bb["ux"] * (A["half"] + 2.3) * sb
+                pz = p["z"] + A["uz"] * (Bb["half"] + 2.3) * sa + Bb["uz"] * (A["half"] + 2.3) * sb
+                if not inside(px, pz):
+                    continue
+                if in_road(px, pz) or in_building(footprints, px, pz):
+                    continue
+                spot = (px, pz)
+                break
+            if spot:
+                break
+        if spot is None:
+            no_room += 1
+            continue
+        px, pz = spot
+        taken.add(p["x"], p["z"])
+        y = float(g.at(np.array([px]), np.array([pz]))[0])
+        i, j = chunk_of(px, pz)
+        ox, oz = W + i * CH, N + j * CH
+        for b, arm in enumerate(pick):
+            txt = abbrev(arm["name"])
+            if not txt:
+                continue
+            out[(i, j)].append(dict(
+                x=px - ox, z=pz - oz, y=y,
+                # bearing of the street this blade names: heading (sin, -cos)
+                yaw=math.atan2(arm["ux"], -arm["uz"]) % (2 * math.pi),
+                blade=b, post=1 if b == 0 else 0, name=txt))
+        made += 1
+    n = sum(len(v) for v in out.values())
+    print(f"  street signs: {made} posts, {n} blades "
+          f"({len(at)} connectors, {no_room} junctions with no clear corner)")
+    return out
+
+
 def carriageway_index(centrelines):
     """Every drivable surface as a polygon, for rejecting props that land in it.
 
@@ -981,7 +1117,7 @@ def carriageway_index(centrelines):
     return shapely.STRtree(polys), polys
 
 
-def bake_props(g, centrelines, tree_pts, infra_rows, footprints):
+def bake_props(g, centrelines, tree_pts, infra_rows, footprints, in_road):
     props = []
     trees = Hash2D(12.0)
     lamps = Hash2D(24.0)
@@ -1020,9 +1156,6 @@ def bake_props(g, centrelines, tree_pts, infra_rows, footprints):
     # reads as abandoned. Everything generated is DETERMINISTIC on position --
     # with Math.random the same corner grows a different tree each bake and the
     # collider stops agreeing with the picture.
-    road_tree, _ = carriageway_index(centrelines)
-    in_road = lambda x, z: len(road_tree.query(shapely.points(x, z),
-                                               predicate="intersects")) > 0
     grown_t = grown_l = in_road_rej = 0
     for s in centrelines:
         w = C.STREETSCAPE.get(s["cls"])
@@ -1175,25 +1308,49 @@ def pack_areas(items):
     return b
 
 
-def pack_shops(items):
-    """SHOP plus the NAME table it indexes into."""
+class NameTable:
+    """One string table per chunk, SHARED by the shops and the street blades.
+
+    Two sections indexing two tables is two tables to keep in step and two
+    copies of "SE HAWTHORNE BLVD" in a chunk that has it on four corners. The
+    reader builds one list from NAME and both sections index into it.
+    """
+    def __init__(self):
+        self.list, self.idx = [], {}
+
+    def at(self, nm):
+        if nm not in self.idx:
+            self.idx[nm] = len(self.list)
+            self.list.append(nm)
+        return self.idx[nm]
+
+    def bytes(self):
+        nb = bytearray()
+        for nm in self.list:
+            e = nm.encode("utf-8")[:255]
+            nb += struct.pack("<B", len(e)) + e
+        return bytes(nb)
+
+
+def pack_shops(items, names):
     b = bytearray()
-    names, idx = [], {}
     for it in items:
-        nm = it["name"]
-        if nm not in idx:
-            idx[nm] = len(names)
-            names.append(nm)
         b += struct.pack("<BBBB", it["cat"], it["flags"],
                          int(it["yaw"] / (2*math.pi) % 1.0 * 256) & 255,
                          max(4, min(255, int(round(it["w"] * 4)))))
         b += struct.pack("<hhhh", dm(it["x"]), dm(it["z"]), dm(it["y"]), dm(it["h"]))
-        b += struct.pack("<H", idx[nm])
-    nb = bytearray()
-    for nm in names:
-        e = nm.encode("utf-8")[:255]
-        nb += struct.pack("<B", len(e)) + e
-    return bytes(b), bytes(nb), len(names)
+        b += struct.pack("<H", names.at(it["name"]))
+    return bytes(b)
+
+
+def pack_signs(items, names):
+    b = bytearray()
+    for it in items:
+        b += struct.pack("<BB", (1 if it["post"] else 0) | (it["blade"] << 1),
+                         int(it["yaw"] / (2*math.pi) % 1.0 * 256) & 255)
+        b += struct.pack("<hhh", dm(it["x"]), dm(it["z"]), dm(it["y"]))
+        b += struct.pack("<H", names.at(it["name"]))
+    return bytes(b)
 
 
 def pack_props(items):
@@ -1245,7 +1402,7 @@ def bake_places(centrelines, landmarks):
     return out
 
 
-def write_all(g, bld, roads, areas, props, shops, far, landmarks, places, river):
+def write_all(g, bld, roads, areas, props, shops, signs, far, landmarks, places, river):
     os.makedirs(OUT, exist_ok=True)
     for f in glob.glob(os.path.join(OUT, "*.bin")):
         os.remove(f)
@@ -1268,16 +1425,20 @@ def write_all(g, bld, roads, areas, props, shops, far, landmarks, places, river)
             # at NaN and nothing said why. A one-letter name in a long function
             # is how a constant gets quietly replaced by a list of cafes.
             SH = shops.get((i, j), [])
+            SG = signs.get((i, j), [])
+            nt = NameTable()
             if SH:
-                sb, nb, nn = pack_shops(SH)
-                w.add("SHOP", len(SH), sb)
-                w.add("NAME", nn, nb)
+                w.add("SHOP", len(SH), pack_shops(SH, nt))
+            if SG:
+                w.add("SGNS", len(SG), pack_signs(SG, nt))
+            if nt.list:
+                w.add("NAME", len(nt.list), nt.bytes())
             data = w.bytes()
             name = f"c{i}_{j}.bin"
             open(os.path.join(OUT, name), "wb").write(data)
             total += len(data)
             chunks.append(dict(i=i, j=j, bytes=len(data), b=len(B), r=len(R),
-                               a=len(A), p=len(P), s=len(SH)))
+                               a=len(A), p=len(P), s=len(SH), g=len(SG)))
 
     fb = bytearray(b"PDXF" + struct.pack("<I", len(far)))
     for cx, cz, base, top, rx, rz, ci in far:
@@ -1382,12 +1543,22 @@ def main():
     rows.sort(key=lambda r: -r[2])
     shops = bake_shops(g, rows, ftree, list(fgeo), centrelines)
 
+    # ONE carriageway index, built once and handed to both. It is a second and a
+    # half of shapely and it is the same question either time -- "is this point
+    # in a road" -- so two of them is two things to keep in step.
+    road_tree, _ = carriageway_index(centrelines)
+    in_road = lambda x, z: len(road_tree.query(shapely.points(x, z),
+                                               predicate="intersects")) > 0
+
+    print(" street signs")
+    signs = bake_street_signs(g, centrelines, ftree, in_road)
+
     print(" street furniture")
     it = load("base-infrastructure")
     igeo = project(it["geometry"].to_pylist())
     infra = [(c, p.x, p.y) for p, c in zip(igeo, it["class"].to_pylist())
              if p is not None and p.geom_type == "Point"]
-    props = bake_props(g, centrelines, tree_pts, infra, ftree)
+    props = bake_props(g, centrelines, tree_pts, infra, ftree, in_road)
 
     print(" places")
     landmarks = bridges + landmarks
@@ -1397,7 +1568,7 @@ def main():
           + (f", {min(r[2] for r in river)*2:.0f}..{max(r[2] for r in river)*2:.0f} m wide" if river else ""))
 
     print(" writing")
-    write_all(g, bld, roads, areas, props, shops, far, landmarks, places, river)
+    write_all(g, bld, roads, areas, props, shops, signs, far, landmarks, places, river)
 
     # The map the MAP key shows is drawn from the BAKED chunks, not from the
     # source tables: it is wrong if the writer is wrong, if the reader is wrong,

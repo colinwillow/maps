@@ -198,6 +198,64 @@ are allowed to walk around in, and that is the whole job.
   weighted by height, computed in `world.loadFar()`. A pair of coordinates in
   `tune.js` would not survive the play area being moved or grown.
 
+### Street name blades
+
+`game/streets.js`. A post on a corner with a green rectangle on it saying what
+the street is, at **1,932 junctions** — found, never authored, and filled from
+the map data with the one thing a generator cannot invent. A grid of identical
+blocks is unnavigable however well it is modelled; this is the cheapest
+legibility in the city.
+
+* **A junction is Overture's CONNECTOR, not a coinciding coordinate** — the
+  bridge solver's own lesson, one system along: two streets crossing at the
+  same plan position twenty feet apart are a freeway stack, not a corner you
+  can stand on. One post per 32 m, so a divided street with a connector on each
+  carriageway does not grow a little forest.
+* **A blade's long axis is PARALLEL TO THE STREET IT NAMES.** That is how a
+  street sign works and it is not arbitrary: it puts the face square to
+  somebody arriving along the CROSS street, who is the only person who needs
+  it. Mounted the other way it is edge-on to everybody.
+* **The names are abbreviated the way a real blade is** — "Southwest Hawthorne
+  Boulevard" becomes "SW HAWTHORNE BLVD". The directional prefix is the whole
+  address system in Portland (SE 12th and NE 12th are two miles apart) so it is
+  the one part that must never be dropped, and a test pins it.
+* **They are half again life size, on purpose.** A real blade is 23 cm deep
+  with 10 cm lettering, and measured at a natural walking distance that is at
+  the very edge of legible — which fails the only thing this exists for.
+  Accurate and useless is worse than large and readable.
+* **The whole box is white and the green is a panel on it.** A green rectangle
+  is a shape; a green rectangle with a white line round it is a SIGN, and that
+  border does more at forty metres than the lettering does. Built the other way
+  round — green box, white end caps — the caps read as pale tabs stuck on.
+
+### One atlas for every name in the world
+
+`SignText` in `shops.js` carries the shopfronts AND the blades, still in one
+draw call, and neither producer knows the other exists: each pushes boards into
+a list and the atlas decides what fits.
+
+* **A CELL IS KEYED ON THE TEXT, NOT ON THE SIGN.** There are 405 distinct
+  street names on 3,864 blades — the same one is on both corners of a junction
+  and on the next block too — so a cell per board spends the whole atlas on
+  four copies of one street. Keyed on the string, 28 cells were carrying 58
+  boards on Burnside.
+* **The INK IS MEASURED, not assumed to fill its cell.** A cell is 256×85 and a
+  blade is 1.5×0.28 m; mapping the whole cell onto the whole board stretches
+  every letter by the ratio between them — 1.7× wide, and wrong differently for
+  every name because the font is shrunk to fit. `actualBoundingBox*` gives the
+  real ink box, and `place()` fits that SHAPE centred inside whatever space the
+  board offers.
+* **A board gives the space available and lists its corners anticlockwise from
+  the READER'S bottom left.** That rule lives in one place because the two
+  producers genuinely disagree about which way that is: a shop's board runs
+  along `(-fz, fx)` with its face out along `(fx, fz)`, and a blade's runs
+  along `(fx, fz)` with its face out along `(-fz, fx)` — a quarter turn apart,
+  so one of them lists its corners the other way round. Both directions are
+  pinned by tests that were checked by reverting the fix.
+* **A blade needs text on BOTH sides**, two quads sharing one cell. A
+  double-sided quad shows the name in mirror image from behind, which reads as
+  a rendering fault rather than as a sign.
+
 Landmines already paid for here:
 
 * **A shape seen from underneath needs its bottom face.** The crowd's `box()`
@@ -227,6 +285,10 @@ Landmines already paid for here:
   inside `write_all` wrote a list of cafes into `manifest.world.south`, which
   made the map overlay's player dot NaN and said nothing. A one-letter name in a
   long function is how a constant gets quietly replaced.
+* **`Overrides.filter` has to carry EVERY layer through, not just the ones with
+  a loop.** `shop` was missing from the object it builds, so a chunk that
+  merely TOUCHED a clear box lost every shopfront in it — five hundred metres
+  of signage gone because a bridge two streets away has an override.
 
 ## Still to do
 

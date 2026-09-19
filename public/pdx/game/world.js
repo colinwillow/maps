@@ -16,6 +16,7 @@ import { parseChunk, parseFar } from './chunk.js';
 import { buildTerrain, buildBuildings, buildRoads, buildAreas } from './build.js';
 import { buildProps } from './props.js';
 import { buildShops } from './shops.js';
+import { buildStreetSigns } from './streets.js';
 import { STREAM, WATER, BUILDING, BUILDING_DEFAULT } from './tune.js';
 
 /**
@@ -220,7 +221,8 @@ export class World {
     } catch (e) {
       // A chunk that is not there is a hole in the city, not a reason to stop.
       // It is remembered as empty so it is never asked for again on every frame.
-      this.pending.set(id, { terr: null, bldg: [], road: [], area: [], prop: null });
+      this.pending.set(id, { terr: null, bldg: [], road: [], area: [],
+                             prop: null, shop: [], sign: [] });
       if (window.__crash) window.__crash('chunk ' + id + ': ' + e.message);
     } finally {
       this.fetching.delete(id);
@@ -250,10 +252,11 @@ export class World {
     add(buildBuildings(c.bldg, this.names.building, lod), this.opaque);
     if (lod === 'full' || lod === 'mid') add(buildProps(c.prop, this.names.prop, lod), this.opaque);
     if (c.shop && c.shop.length) add(buildShops(c.shop, this.names.shop), this.opaque);
+    if (c.sign && c.sign.length) add(buildStreetSigns(c.sign), this.opaque);
     add(buildAreas(c.area, this.names.area, true), this.water);
     this.root.add(g);
-    this.live.set(id, { group: g, lod, meshes, raw,
-                        shops: c.shop, ox: g.position.x, oz: g.position.z });
+    this.live.set(id, { group: g, lod, meshes, raw, shops: c.shop, sign: c.sign,
+                        ox: g.position.x, oz: g.position.z });
     this.ground.addChunk(i, j, c, this.names);
     this.pending.delete(id);
   }

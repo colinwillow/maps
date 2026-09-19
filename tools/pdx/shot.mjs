@@ -104,6 +104,8 @@ const info = await page.evaluate(() => ({
   ground: +window.pdx.ground.terrainAt(window.pdx.player.x, window.pdx.player.z).toFixed(1),
   rig: window.pdx.player && document.getElementById('chip').textContent,
   where: document.getElementById('where').textContent,
+  cells: window.pdx.signs && window.pdx.signs.cells,
+  quads: window.pdx.signs && window.pdx.signs.quads,
   calls: window.pdx.renderer.info.render.calls,
   triangles: window.pdx.renderer.info.render.triangles,
 }));

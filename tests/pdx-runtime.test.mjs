@@ -10,7 +10,8 @@ import { parseChunk } from '../public/pdx/game/chunk.js';
 import * as THREE from 'three';
 import { buildTerrain, buildBuildings, buildRoads, buildAreas, Soup } from '../public/pdx/game/build.js';
 import { Crowd, Pavements, figure } from '../public/pdx/game/crowd.js';
-import { buildShops } from '../public/pdx/game/shops.js';
+import { buildShops, shopBoards, SignText } from '../public/pdx/game/shops.js';
+import { buildStreetSigns, streetBoards, bladeW, bladeY } from '../public/pdx/game/streets.js';
 import { Ambient, car, boat, plane, heli, prism, closed } from '../public/pdx/game/ambient.js';
 import { buildProps } from '../public/pdx/game/props.js';
 import { Ground } from '../public/pdx/game/ground.js';
@@ -714,3 +715,132 @@ describe('ambient life', () => {
     expect(a.mesh.geometry.attributes.position.array.length).toBeGreaterThanOrEqual(a.live * 9);
   });
 });
+
+describe('the names you can read', () => {
+  // A sign says the right thing or it says it BACKWARDS, and a mirrored name
+  // is worse than no name: it reads as a rendering fault rather than as a
+  // street. Nothing about the triangle count, the position or the atlas
+  // changes when it happens, so the check has to pin the DIRECTION the text
+  // runs in -- against a normal derived from the sign's own data, never from
+  // the quad, which would make it circular and always pass.
+  const live = [];
+  const [ci, cj] = chunkOf(M.spawn.x, M.spawn.z);
+  for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+    const i = ci + di, j = cj + dj;
+    live.push({ raw: read(i, j), ox: W.west + i * W.chunk, oz: W.north + j * W.chunk });
+  }
+  for (const rec of live) { rec.shops = rec.raw.shop; rec.sign = rec.raw.sign; }
+
+  /** Reader's right, for somebody standing out along a board's own normal. */
+  const readerRight = (ox, oz) => {
+    // Viewer forward is -normal, up is +Y, and right = forward x up.
+    // forward = (-ox, 0, -oz) -> right = (-oz, 0, ox) ... derived, not guessed:
+    // (-ox,0,-oz) x (0,1,0) = (0*0 - (-oz)*1, (-oz)*0 - (-ox)*0, (-ox)*1 - 0) = (oz, 0, -ox)
+    return [oz, -ox];
+  };
+
+  it('street blades read forwards from the side you are standing on', () => {
+    // ONE SIGN AT A TIME. Matching a board back to a sign BY NAME is what the
+    // first version did and it is wrong: "SW ANKENY ST" is on a dozen corners
+    // and the street bends between them, so the yaw it was checked against
+    // belonged to a different junction and the check came out at -0.06 -- a
+    // near miss that looks exactly like a real one.
+    let tested = 0;
+    for (const rec of live) for (const sg of rec.sign) {
+      const out = [];
+      streetBoards({ sign: [sg], ox: rec.ox, oz: rec.oz },
+                   rec.ox + sg.x, rec.oz + sg.z, out);
+      if (!out.length) continue;
+      tested++;
+      const b = out[0];
+      expect(b.quads.length, 'a blade needs text on BOTH sides').toBe(2);
+      const fx = Math.sin(sg.yaw), fz = -Math.cos(sg.yaw);
+      // Front face looks along +n, back face along -n.
+      for (const [side, [A, B]] of [[1, b.quads[0]], [-1, b.quads[1]]]) {
+        const [rx, rz] = readerRight(-fz * side, fx * side);
+        const ax = B[0] - A[0], az = B[2] - A[2];
+        expect(ax * rx + az * rz,
+          `"${b.name}" is mirrored on its ${side > 0 ? 'front' : 'back'}`).toBeGreaterThan(0);
+      }
+    }
+    expect(tested, 'no blades near the spawn').toBeGreaterThan(20);
+  });
+
+  it('shop names read forwards too, and the two boards disagree about which way that is', () => {
+    // A shop board's own axis runs along `(-fz, fx)` with its face out along
+    // `(fx, fz)`; a blade's runs the other way round. One of them has to list
+    // its corners in the opposite order, which is exactly the kind of thing
+    // that is right until somebody tidies it.
+    let tested = 0;
+    for (const rec of live) for (const sh of rec.shops) {
+      const out = [];
+      shopBoards({ shops: [sh], ox: rec.ox, oz: rec.oz },
+                 rec.ox + sh.x, rec.oz + sh.z, out, NAMES.shop);
+      if (!out.length) continue;
+      tested++;
+      const b = out[0];
+      const [rx, rz] = readerRight(Math.sin(sh.yaw), -Math.cos(sh.yaw));
+      const [A, B] = b.quads[0];
+      expect((B[0] - A[0]) * rx + (B[2] - A[2]) * rz,
+        `"${b.name}" is mirrored`).toBeGreaterThan(0);
+    }
+    expect(tested, 'no shopfronts near the spawn').toBeGreaterThan(20);
+  });
+
+  it('a blade is a closed box at the top of a post, with no NaN in it', () => {
+    const one = { post: 1, blade: 0, yaw: 1.1, x: 0, z: 0, y: 5, name: 'SE HAWTHORNE BLVD' };
+    const g = buildStreetSigns([one]);
+    expect(g.tris).toBeGreaterThan(20);
+    let lo = 1e9, hi = -1e9;
+    for (let v = 0; v < g.tris * 3; v++) {
+      expect(Number.isFinite(g.position[v*3]), 'NaN vertex').toBe(true);
+      lo = Math.min(lo, g.position[v*3+1]); hi = Math.max(hi, g.position[v*3+1]);
+    }
+    for (let t = 0; t < g.tris; t++)
+      expect(Number.isFinite(g.normal[t*9]), 'a degenerate face').toBe(true);
+    // The post's foot is on the ground it was given and the blade is at the top
+    // of it -- a sign floating a metre up, or buried, is the same one line.
+    expect(lo).toBeCloseTo(one.y, 2);
+    expect(hi).toBeGreaterThan(one.y + 2.4);
+    expect(hi).toBeLessThan(one.y + 3.4);
+    // A blade wide enough to hold its name, and not a hoarding.
+    expect(bladeW(one.name)).toBeGreaterThan(1.2);
+    expect(bladeW(one.name)).toBeLessThan(2.6);
+    // The second blade hangs under the first, or they occupy the same air.
+    expect(bladeY({ blade: 1 })).toBeLessThan(bladeY({ blade: 0 }) - 0.2);
+  });
+
+  it('a name that repeats costs ONE atlas cell', () => {
+    // 435 street names over 2,275 junctions: the same blade is on both corners
+    // and on the next block too. A cell per BOARD spends the whole atlas on
+    // four copies of one street, which is what makes this the difference
+    // between the blades being readable and the shops being readable.
+    const st = fakeSignText();
+    const boards = [
+      { score: 1, name: 'SE HAWTHORNE BLVD', ink: '#fff', quads: [Q(0), Q(1)] },
+      { score: 2, name: 'SE 12TH AVE', ink: '#fff', quads: [Q(2), Q(3)] },
+      { score: 3, name: 'SE HAWTHORNE BLVD', ink: '#fff', quads: [Q(4), Q(5)] },
+      { score: 4, name: 'SE HAWTHORNE BLVD', ink: '#fff', quads: [Q(6)] },
+    ];
+    st.update(99, 0, 0, [{}], (rec, px, pz, out) => out.push(...boards));
+    expect(st.cells, 'four boards, three of them the same street').toBe(2);
+    expect(st.quads, 'every board still gets its quads').toBe(7);
+  });
+});
+
+const Q = (k) => [[k, 0, 0], [k + 1, 0, 0], [k + 1, 1, 0], [k, 1, 0]];
+
+/** SignText against a canvas stub: node has no DOM and the logic under test
+ *  is the CELL BOOKKEEPING, which never touches a pixel. */
+function fakeSignText() {
+  const ctx = {
+    clearRect() {}, fillText() {},
+    measureText: (s) => ({ width: s.length * 8, actualBoundingBoxLeft: s.length * 4,
+      actualBoundingBoxRight: s.length * 4, actualBoundingBoxAscent: 10,
+      actualBoundingBoxDescent: 2 }),
+    set font(_) {}, get font() { return ''; }, set fillStyle(_) {},
+    set textAlign(_) {}, set textBaseline(_) {},
+  };
+  globalThis.document = { createElement: () => ({ getContext: () => ctx }) };
+  return new SignText({ add() {} });
+}

@@ -62,9 +62,24 @@ Sections, each described where it is built in bake.py:
                            i16 h            sign centre above y, dm
                            u16 name         index into NAME
 
+  SGNS  (count = n)      a street name blade at a junction, 9 bytes each:
+                           u8  flags        bit0 draw the post, bit1 which blade
+                           u8  yaw          bearing of the street NAMED, 0..255
+                           i16 x, z         chunk-local dm, the post's foot
+                           i16 y            absolute dm, the ground there
+                           u16 name         index into NAME
+                         One record per BLADE and up to two blades share a
+                         post, which is why the post is a flag on the first of
+                         them rather than a record of its own: a junction's two
+                         blades are the same object and splitting them into two
+                         sections would let them drift apart.
+
   NAME  (count = n)      u8 length + UTF-8, repeated. Names are clamped to 48
                          bytes: a sign nobody can read at 40 characters is a
                          sign nobody can read at 80, and the length is a u8.
+                         ONE TABLE PER CHUNK, SHARED by SHOP and SGNS -- a
+                         chunk with "SE HAWTHORNE BLVD" on four corners stores
+                         the string once.
 
   PROP  (count = n)      10 bytes each:
                            u8  kind

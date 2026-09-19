@@ -49,6 +49,8 @@ bake.py
                 bridges SOLVED, split per chunk
   4  areas      land cover -> clipped, cut on a 25 m lattice, draped
   5  shops      places -> scored against every wall of the 4 nearest buildings
+     signs      junctions of two differently NAMED streets -> a post and two
+                blades, abbreviated the way a real street sign is
   6  props      real furniture + generated trees, lamps and parked cars
   7  places     named streets sampled every 70 m, for the "where am I" readout
      river      a centreline scanned down the Willamette, for the boats
@@ -84,6 +86,13 @@ wrong, or if the winding is inside out, and one glance tells all three apart
 from the correct answer.
 
 ## Things that cost a build
+
+* **A JUNCTION IS A CONNECTOR, NOT A COINCIDING COORDINATE.** The same lesson
+  the bridge solver paid for, applied to street signs: two streets crossing at
+  the same plan position twenty feet apart vertically are a freeway stack and
+  not a corner anybody stands on. And ONE POST PER 32 m, because a divided
+  street carries a connector on each carriageway and a slip lane adds a third
+  -- keyed per connector, every boulevard junction grows a little forest.
 
 * **`S` IS THE WORLD'S SOUTH EDGE, AND A LOOP VARIABLE TOOK IT.** `write_all`
   used `S` for a chunk's shop list, so `manifest.world.south` came out as a

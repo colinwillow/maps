@@ -27,13 +27,18 @@ export function parseChunk(buf) {
       count: v.getUint32(o + 12, true),
     };
   }
-  const out = { terr: null, bldg: [], road: [], area: [], prop: null, shop: [] };
+  const out = { terr: null, bldg: [], road: [], area: [], prop: null,
+                shop: [], sign: [] };
   if (sec.TERR) out.terr = readTerrain(v, sec.TERR);
   if (sec.BLDG) out.bldg = readBuildings(v, sec.BLDG);
   if (sec.ROAD) out.road = readRoads(v, sec.ROAD);
   if (sec.AREA) out.area = readAreas(v, sec.AREA);
   if (sec.PROP) out.prop = readProps(v, sec.PROP);
-  if (sec.SHOP) out.shop = readShops(v, sec.SHOP, sec.NAME);
+  // ONE name table, read once, indexed by both. Reading it per section would
+  // decode every string twice for a chunk that has shops and blades in it.
+  const names = sec.NAME ? readNames(v, sec.NAME) : [];
+  if (sec.SHOP) out.shop = readShops(v, sec.SHOP, names);
+  if (sec.SGNS) out.sign = readSigns(v, sec.SGNS, names);
   return out;
 }
 
@@ -129,16 +134,34 @@ function readProps(v, s) {
   return { n, kind, yaw, scale, tint, pos };
 }
 
-function readShops(v, s, ns) {
+function readNames(v, ns) {
   const names = [];
-  if (ns) {
-    let p = ns.off;
-    const dec = new TextDecoder();
-    for (let i = 0; i < ns.count; i++) {
-      const n = v.getUint8(p); p += 1;
-      names.push(dec.decode(new Uint8Array(v.buffer, p, n))); p += n;
-    }
+  let p = ns.off;
+  const dec = new TextDecoder();
+  for (let i = 0; i < ns.count; i++) {
+    const n = v.getUint8(p); p += 1;
+    names.push(dec.decode(new Uint8Array(v.buffer, p, n))); p += n;
   }
+  return names;
+}
+
+function readSigns(v, s, names) {
+  let p = s.off;
+  const out = new Array(s.count);
+  for (let k = 0; k < s.count; k++) {
+    const flags = v.getUint8(p), yaw = v.getUint8(p + 1) / 256 * Math.PI * 2;
+    p += 2;
+    const x = v.getInt16(p, true) * DM, z = v.getInt16(p + 2, true) * DM,
+          y = v.getInt16(p + 4, true) * DM;
+    p += 6;
+    const ni = v.getUint16(p, true); p += 2;
+    out[k] = { post: flags & 1, blade: (flags >> 1) & 1, yaw, x, z, y,
+               name: names[ni] || '' };
+  }
+  return out;
+}
+
+function readShops(v, s, names) {
   let p = s.off;
   const out = new Array(s.count);
   for (let k = 0; k < s.count; k++) {

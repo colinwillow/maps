@@ -268,3 +268,92 @@ describe('the skyline', () => {
     expect(tallest).toBeLessThan(200);
   });
 });
+
+describe('street name blades', () => {
+  // The names are the whole feature. A blade is a green rectangle either way;
+  // what makes it worth having is that it says BURNSIDE when you are on
+  // Burnside, so these check the STRINGS and WHERE THEY STAND.
+  const all = [];
+  for (let j = 0; j < W.n; j++) for (let i = 0; i < W.n; i++) {
+    const c = read(i, j);
+    for (const sg of c.sign) all.push({ ...sg, c, i, j,
+      wx: W.west + i * W.chunk + sg.x, wz: W.north + j * W.chunk + sg.z });
+  }
+
+  it('puts a blade at a real number of real junctions', () => {
+    expect(all.length, 'no street signs anywhere in the city').toBeGreaterThan(1500);
+    const names = new Set(all.map((s) => s.name));
+    expect(names.size, 'distinct street names on blades').toBeGreaterThan(250);
+    // Portland's grid, in its own words.
+    expect(names.has('W BURNSIDE ST') || names.has('E BURNSIDE ST')).toBe(true);
+  });
+
+  it('abbreviates the way a real blade does, and keeps the quadrant', () => {
+    // "SE 12TH AVE" and "NE 12TH AVE" are two miles apart: the directional
+    // prefix IS the address system here, and it is the one part of the name
+    // that must never be abbreviated away.
+    let quadrant = 0;
+    for (const s of all) {
+      expect(s.name, `"${s.name}" is not upper case`).toBe(s.name.toUpperCase());
+      expect(s.name.length, `"${s.name}" is too long for a blade`).toBeLessThanOrEqual(22);
+      expect(s.name.length).toBeGreaterThan(1);
+      if (/^(NW|NE|SW|SE|N|S|E|W) /.test(s.name)) quadrant++;
+    }
+    // Portland names nearly everything by quadrant; if this collapses, the
+    // prefix is being eaten somewhere.
+    expect(quadrant / all.length).toBeGreaterThan(0.75);
+  });
+
+  it('is a JUNCTION: two blades on one post, across each other', () => {
+    const posts = new Map();
+    for (const s of all) posts.set(`${s.i},${s.j},${s.x},${s.z}`,
+      [...(posts.get(`${s.i},${s.j},${s.x},${s.z}`) || []), s]);
+    let pairs = 0, square = 0;
+    for (const [, a] of posts) {
+      if (a.length !== 2) continue;
+      pairs++;
+      expect(a[0].name).not.toBe(a[1].name);
+      // Exactly one of the two carries the post: the other is bolted to it.
+      expect(a.filter((s) => s.post).length, 'a post with two posts').toBe(1);
+      // A corner is two streets CROSSING. Anything within 30 degrees of
+      // parallel is the same street continuing, and a blade for it on both
+      // sides of the same post says nothing.
+      const d = Math.abs(Math.cos(a[0].yaw - a[1].yaw));
+      if (d < Math.cos(Math.PI / 3)) square++;
+    }
+    expect(pairs, 'no two-blade posts at all').toBeGreaterThan(1000);
+    expect(square / pairs, 'blades on a post should CROSS').toBeGreaterThan(0.85);
+  });
+
+  it('stands on the pavement, not inside a building', () => {
+    // A signpost through a shopfront is the same class of bug as a tree in the
+    // middle of Burnside, and just as obvious once you are standing there.
+    // A chunk record carries a RING and no bounding box -- `Ground` computes
+    // one when it loads, and reading `b.minx` here would compare against
+    // `undefined`, which is false either way and quietly tests nothing.
+    let inside = 0;
+    for (const s of all) {
+      for (const b of s.c.bldg) {
+        let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9;
+        for (let k = 0; k < b.nv; k++) {
+          const x = b.ring[k*2], z = b.ring[k*2+1];
+          if (x < x0) x0 = x; if (x > x1) x1 = x;
+          if (z < z0) z0 = z; if (z > z1) z1 = z;
+        }
+        if (s.x < x0 || s.x > x1 || s.z < z0 || s.z > z1) continue;
+        if (inRing(b, s.x, s.z)) { inside++; break; }
+      }
+    }
+    expect(inside, `${inside} of ${all.length} signposts stand inside a building`).toBe(0);
+  });
+});
+
+/** Point in a building's footprint, in chunk-local metres. */
+function inRing(b, x, z) {
+  let hit = false;
+  for (let i = 0, j = b.nv - 1; i < b.nv; j = i++) {
+    const xi = b.ring[i*2], zi = b.ring[i*2+1], xj = b.ring[j*2], zj = b.ring[j*2+1];
+    if ((zi > z) !== (zj > z) && x < (xj - xi) * (z - zi) / (zj - zi) + xi) hit = !hit;
+  }
+  return hit;
+}
