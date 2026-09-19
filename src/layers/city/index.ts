@@ -1,6 +1,8 @@
 import type maplibregl from 'maplibre-gl';
 import type { ThreeLayer } from '../three/ThreeLayer';
 import { buildProps } from './props';
+import { buildBuildings } from './assemble';
+import { BUILDINGS, type Footprint } from './buildings';
 import { CITY, planCity, type Prop, type Road, type RoadClass, type Vec2 } from './plan';
 
 /**
@@ -45,9 +47,12 @@ function stableId(s: string): number {
 
 export class CityProps {
   private built: { group: import('three').Group; dispose(): void } | null = null;
+  private town: { group: import('three').Group; dispose(): void; count: number } | null = null;
   private lastCentre: Vec2 | null = null;
   private roads: Road[] = [];
+  private footprints: Footprint[] = [];
   private signature = '';
+  private buildingSignature = '';
   private count = 0;
 
   constructor(private three: ThreeLayer) {}
@@ -55,6 +60,11 @@ export class CityProps {
   /** Props currently in the scene — the test hook, and the HUD's count. */
   get propCount() {
     return this.count;
+  }
+
+  /** Buildings currently in the scene. */
+  get buildingCount() {
+    return this.town?.count ?? 0;
   }
 
   /**
@@ -69,6 +79,69 @@ export class CityProps {
     this.roads = roads;
     this.signature = `set:${roads.length}`;
     this.lastCentre = null;
+  }
+
+  /** The same seam for buildings, for the same reason. */
+  setFootprints(footprints: Footprint[]) {
+    this.footprints = footprints;
+    this.buildingSignature = `set:${footprints.length}`;
+    this.lastCentre = null;
+  }
+
+  /**
+   * Pull building footprints out of the loaded tiles.
+   *
+   * `render_height` and `render_min_height` are OpenMapTiles' own fields, so
+   * the massing is the real massing — the generated part is everything that
+   * makes a box read as a building. render_min_height matters: without it,
+   * anything mapped as a part sitting on top of something else grows from the
+   * ground and buildings sprout spikes.
+   */
+  readBuildings(map: maplibregl.Map): boolean {
+    let feats: maplibregl.GeoJSONFeature[] = [];
+    try {
+      feats = map.querySourceFeatures('openmaptiles', { sourceLayer: 'building' });
+    } catch {
+      return false;
+    }
+
+    const frame = this.three.frame;
+    const seen = new Set<string>();
+    const out: Footprint[] = [];
+
+    for (const f of feats) {
+      const g = f.geometry;
+      const polys: number[][][][] =
+        g.type === 'Polygon' ? [g.coordinates as number[][][]]
+        : g.type === 'MultiPolygon' ? (g.coordinates as number[][][][])
+        : [];
+
+      for (const poly of polys) {
+        if (!poly.length || poly[0].length < 4) continue;
+        const key = `${f.id ?? 'x'}:${poly[0][0][0].toFixed(6)},${poly[0][0][1].toFixed(6)}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({
+          id: stableId(key),
+          // GeoJSON rings repeat their first point last; the wall builder
+          // closes the ring itself, so a duplicate would add a zero-length
+          // edge and, worse, a degenerate quad.
+          rings: poly
+            .map((ring) => ring.slice(0, -1).map(([lng, lat]) => frame.toMeters({ lng, lat })))
+            .filter((ring) => ring.length >= 3),
+          height: Number(f.properties?.render_height ?? 0) || 6,
+          minHeight: Number(f.properties?.render_min_height ?? 0) || 0,
+        });
+      }
+    }
+
+    if (!out.length) return false;
+    const signature = `${out.length}:${out.reduce((h, b) => (h ^ b.id) >>> 0, 0)}`;
+    if (signature === this.buildingSignature) return false;
+    this.buildingSignature = signature;
+    this.footprints = out;
+    this.lastCentre = null;
+    return true;
   }
 
   /**
@@ -146,6 +219,14 @@ export class CityProps {
     }
     this.lastCentre = { ...centre };
     this.apply(planCity(this.roads, centre));
+
+    const town = buildBuildings(this.footprints, centre, BUILDINGS);
+    this.three.scene.add(town.group);
+    if (this.town) {
+      this.three.scene.remove(this.town.group);
+      this.town.dispose();
+    }
+    this.town = town;
   }
 
   private apply(props: Prop[]) {
@@ -163,6 +244,11 @@ export class CityProps {
   }
 
   dispose() {
+    if (this.town) {
+      this.three.scene.remove(this.town.group);
+      this.town.dispose();
+      this.town = null;
+    }
     if (!this.built) return;
     this.three.scene.remove(this.built.group);
     this.built.dispose();

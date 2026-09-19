@@ -365,6 +365,9 @@ describe('reading the road network off the tiles', () => {
     requestRedraw() { this.redraws++; },
   });
 
+  const named = (layer: { scene: THREE.Scene }, name: string) =>
+    layer.scene.children.filter((o) => o.name === name);
+
   const line = (lng: number, lat: number, n = 4) =>
     Array.from({ length: n }, (_, i) => [lng + i * 0.001, lat]);
 
@@ -391,7 +394,7 @@ describe('reading the road network off the tiles', () => {
     // Three usable roads got through; the ferry, the cable car and the tunnel
     // did not. A tunnel furnished with street trees is a memorable bug.
     expect(city.propCount).toBeGreaterThan(0);
-    expect(layer.scene.children.length).toBe(1);
+    expect(named(layer, 'city-props').length).toBe(1);
   });
 
   it('only reports a change when the network actually changed', () => {
@@ -432,7 +435,9 @@ describe('reading the road network off the tiles', () => {
     city.setRoads([{ id: 1, kind: 'minor', points: [{ east: -100, south: 0 }, { east: 100, south: 0 }] }]);
     city.refresh({ east: 0, south: 0 }, true);
     city.refresh({ east: 0, south: 0 }, true);
-    expect(layer.scene.children.length).toBe(1);
+    // Rebuilt twice: the old group must go, not accumulate.
+    expect(named(layer, 'city-props').length).toBe(1);
+    expect(named(layer, 'city-buildings').length).toBe(1);
     city.dispose();
     expect(layer.scene.children.length).toBe(0);
     expect(city.propCount).toBe(0);

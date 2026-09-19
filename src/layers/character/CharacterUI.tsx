@@ -41,10 +41,17 @@ export function CharacterUI({ map }: { map: maplibregl.Map | null }) {
         if (roads) layer.setRoads(roads as Parameters<typeof layer.setRoads>[0]);
         return layer.getPropCount();
       };
+      window.__charBuildings = (footprints) => {
+        if (footprints) {
+          layer.setFootprints(footprints as Parameters<typeof layer.setFootprints>[0]);
+        }
+        return layer.getBuildingCount();
+      };
     });
     return () => {
       window.__charMove = undefined;
       window.__charRoads = undefined;
+      window.__charBuildings = undefined;
       layer.detach(map);
       layerRef.current = null;
     };

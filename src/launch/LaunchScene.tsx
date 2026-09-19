@@ -116,6 +116,13 @@ export function LaunchScene({ map }: { map: maplibregl.Map | null }) {
       }
       raf = requestAnimationFrame(frame);
 
+      // CLEAR FIRST. Without this the canvas accumulates every frame it has
+      // ever drawn: stars smear into a wash, the cloud deck piles up on itself
+      // until it is a solid mat, and a passing craft leaves a train of a
+      // hundred overlapping copies of itself behind it. It only ever cleared
+      // on the way out, when the scene parked.
+      ctx.clearRect(0, 0, w, h);
+
       const t = (performance.now() - started) / 1000;
       const centre = map.project(map.getCenter());
       const cx = centre.x;
@@ -151,11 +158,11 @@ export function LaunchScene({ map }: { map: maplibregl.Map | null }) {
       ctx.restore(); // end the hole — the glow and the orbiters may cross it
 
       // ── cloud cover, ON the planet ────────────────────────────────────
-      // __noClouds is a test hook. Clouds are the one thing allowed to paint
-      // over the globe, which would otherwise mask the check that nothing
-      // ELSE does — the starfield bleeding across the planet is a real bug
-      // that check exists to catch.
-      if (!window.__noClouds) {
+      // __backdropOnly is a test hook. Clouds are allowed to paint over the
+      // globe, which would otherwise mask the check that nothing ELSE does —
+      // the starfield bleeding across the planet is a real bug that check
+      // exists to catch.
+      if (!window.__backdropOnly) {
       // Clipped to the disc, and each cloud is projected from its own
       // lng/lat, so the deck turns with the globe instead of sliding over it.
       ctx.save();
@@ -197,10 +204,21 @@ export function LaunchScene({ map }: { map: maplibregl.Map | null }) {
 
       ctx.save();
       ctx.globalAlpha = alpha;
-      drawAtmosphere(ctx, cx, cy, radius, SCENE.glow);
+      // The atmosphere is a foreground effect ON the planet, not backdrop, so
+      // it comes off under the hook with the clouds and the craft. It lays a
+      // haze across the disc at a few units of alpha — which is invisible and
+      // correct, and was tripping a check meant for the starfield by a margin
+      // of about one alpha step, which is what made that check flaky.
+      if (!window.__backdropOnly) drawAtmosphere(ctx, cx, cy, radius, SCENE.glow);
       ctx.globalAlpha = alpha;
 
-      const places = ORBITERS.map((o) => placeOrbiter(o, t, radius, cx, cy));
+      // Craft pass in FRONT of the planet for half of every orbit, which is
+      // the point of them. Under the backdrop-only hook they come off too, or
+      // the check that nothing reaches the globe's face fails whenever one
+      // happens to be crossing it — which looked like a flaky test and was
+      // really the check sampling something it never meant to.
+      const places = window.__backdropOnly
+        ? [] : ORBITERS.map((o) => placeOrbiter(o, t, radius, cx, cy));
       for (const i of inDrawOrder(places)) {
         const p = places[i];
         const o = ORBITERS[i];

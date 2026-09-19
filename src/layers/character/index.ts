@@ -5,6 +5,7 @@ import { loadColin } from './loadColin';
 import { Character } from './Character';
 import { CityProps } from '../city';
 import type { Road } from '../city/plan';
+import type { Footprint } from '../city/buildings';
 import type { LngLat } from '../three/geo';
 
 export const CAMERA = {
@@ -83,7 +84,9 @@ export function characterLayer(origin: LngLat, modelUrl: string) {
     setMove(east: number, south: number): void;
     setLook(x: number, y: number): void;
     setRoads(roads: Road[]): void;
+    setFootprints(footprints: Footprint[]): void;
     getPropCount(): number;
+    getBuildingCount(): number;
     getFps(): number;
     ready: Promise<void>;
   } = {
@@ -96,6 +99,16 @@ export function characterLayer(origin: LngLat, modelUrl: string) {
       // Past 60 degrees is experimental per MapLibre's own docs, so raise the
       // ceiling deliberately here rather than everywhere.
       m.setMaxPitch(85);
+
+      // THREE OWNS THE BUILDINGS while he is walking, so MapLibre's
+      // fill-extrusion is switched off for the duration. Drawing both means
+      // two copies of every building fighting for the same pixels, and there
+      // is no way to hide the extrusion for only the near ones — a style layer
+      // has no idea how far away anything is.
+      if (m.getLayer('building-3d')) {
+        m.setLayoutProperty('building-3d', 'visibility', 'none');
+      }
+
       m.addLayer(three.asCustomLayer());
 
       // Tiles arrive asynchronously and keep arriving as he walks, so the road
@@ -109,7 +122,9 @@ export function characterLayer(origin: LngLat, modelUrl: string) {
         lastRead = now;
         // Only re-plan when the road network actually changed, not merely
         // because the map went quiet again.
-        if (city.readRoads(m) && character) {
+        const changed = city.readRoads(m);
+        const built = city.readBuildings(m);
+        if ((changed || built) && character) {
           city.refresh({ east: character.east, south: character.south }, true);
         }
       };
@@ -159,6 +174,9 @@ export function characterLayer(origin: LngLat, modelUrl: string) {
       if (onIdle) m.off('idle', onIdle);
       onIdle = null;
       city.dispose();
+      if (m.getLayer('building-3d')) {
+        m.setLayoutProperty('building-3d', 'visibility', 'visible');
+      }
       if (m.getLayer(three.id)) m.removeLayer(three.id);
       map = null;
     },
@@ -190,8 +208,16 @@ export function characterLayer(origin: LngLat, modelUrl: string) {
       city.refresh({ east: character?.east ?? 0, south: character?.south ?? 0 }, true);
     },
 
+    /** The same seam for buildings — see setRoads. */
+    setFootprints(footprints: Footprint[]) {
+      city.setFootprints(footprints);
+      city.refresh({ east: character?.east ?? 0, south: character?.south ?? 0 }, true);
+    },
+
     /** Street props currently in the scene. */
     getPropCount: () => city.propCount,
+    /** Buildings currently in the scene. */
+    getBuildingCount: () => city.buildingCount,
 
     /** Right-thumb camera input, -1..1 each. */
     setLook(x: number, y: number) {

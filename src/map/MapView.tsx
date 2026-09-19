@@ -17,8 +17,12 @@ declare global {
     /** Test hook: the live map, for the headless smoke test. */
     __map?: maplibregl.Map;
     __mapReady?: boolean;
-    /** Test hook: suppress the cloud deck so the globe's face is bare. */
-    __noClouds?: boolean;
+    /**
+     * Test hook: draw ONLY the backdrop — stars and planets — so a check can
+     * prove none of it reaches the globe's face. Clouds and passing craft
+     * legitimately cross the disc, so they are suppressed with it.
+     */
+    __backdropOnly?: boolean;
     /** Test hook: drive the character directly, bypassing the thumb sticks. */
     __charMove?: (east: number, south: number) => void;
     /**
@@ -27,6 +31,8 @@ declare global {
      * test gets streets to furnish.
      */
     __charRoads?: (roads?: unknown[]) => number;
+    /** Test hook: the same seam for building footprints. */
+    __charBuildings?: (footprints?: unknown[]) => number;
   }
 }
 
