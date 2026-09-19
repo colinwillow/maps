@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { measureFacing, yawToFaceNorth } from './rig';
 
 /**
  * Loads the Colin model and makes him a real-world 1.8m tall, feet on y=0.
@@ -64,9 +65,16 @@ export async function loadColin(url: string, heightM = 1.8): Promise<LoadedChara
   const gltf = await new GLTFLoader().loadAsync(url);
 
   const inner = gltf.scene;
+  // root -> facing -> inner. The facing node carries the model's own
+  // orientation so that root.rotation.y can stay a plain compass heading;
+  // baking the correction into the heading instead would leak it into every
+  // place that reads or writes his heading.
+  const facing = new THREE.Group();
+  facing.name = 'facing';
+  facing.add(inner);
   const root = new THREE.Group();
   root.name = 'colin';
-  root.add(inner);
+  root.add(facing);
 
   // The mixer must exist and be stepped once before measuring: the model is
   // measured in the pose it actually renders in, not its bind pose.
@@ -77,6 +85,20 @@ export async function loadColin(url: string, heightM = 1.8): Promise<LoadedChara
   const first = clips.get('idle_neutral_00') ?? gltf.animations[0];
   if (first) mixer.clipAction(first).play();
   mixer.update(0);
+
+  // TURN HIM TO FACE NORTH, by measuring which way he faces rather than
+  // assuming the GLTF convention. This rig faces +Z, which here is SOUTH, so
+  // without this he runs exactly backwards at every heading — and because the
+  // camera swings in behind him as he walks, what that looks like is a man
+  // sprinting straight at the camera. See rig.ts.
+  root.updateMatrixWorld(true);
+  const facingMeasurement = measureFacing(inner);
+  facing.rotation.y = yawToFaceNorth(facingMeasurement.forward);
+  if ((facingMeasurement.disagreementDeg ?? 0) > 45) {
+    console.warn(
+      `character rig: feet and shoulders disagree about forward by ` +
+      `${facingMeasurement.disagreementDeg?.toFixed(0)} degrees`);
+  }
 
   const height = normaliseHeight(root, inner, heightM);
 

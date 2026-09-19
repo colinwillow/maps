@@ -330,6 +330,31 @@ try {
     check('it goes quiet again once he stops', budget.settled === 0, `${budget.settled} renders`);
   }
 
+  // The controls have to be VISIBLE without being touched first. They were
+  // not: the knob sat at opacity 0 until a thumb landed and there was no base
+  // at all, so there was no way to tell the sticks existed, let alone where.
+  const sticks = await page.evaluate(() => {
+    const vw = window.innerWidth, vh = window.innerHeight;
+    return [...document.querySelectorAll('.stick-base')].map((el) => {
+      const r = el.getBoundingClientRect();
+      return {
+        opacity: +getComputedStyle(el).opacity,
+        w: Math.round(r.width),
+        onScreen: r.left >= 0 && r.top >= 0 && r.right <= vw + 1 && r.bottom <= vh + 1,
+        // A thumb has to be able to reach it: bottom third of the screen.
+        low: r.top > vh * 0.6,
+        leftHalf: r.left + r.width / 2 < vw / 2,
+      };
+    });
+  });
+  check('both thumb sticks are drawn before anything is touched',
+    sticks.length === 2 && sticks.every((s) => s.opacity > 0.3 && s.w > 60),
+    JSON.stringify(sticks.map((s) => `${s.w}px @${s.opacity}`)));
+  check('they sit under the thumbs, one each side, fully on screen',
+    sticks.length === 2 && sticks.every((s) => s.onScreen && s.low) &&
+    sticks.filter((s) => s.leftHalf).length === 1,
+    JSON.stringify(sticks.map((s) => ({ low: s.low, on: s.onScreen, left: s.leftHalf }))));
+
   // ── the real cartography, loaded into a real MapLibre ─────────────────────
   // The static style-spec validator runs in tests/style.test.ts. This is the
   // other half: MapLibre itself must accept the style and build its layers.

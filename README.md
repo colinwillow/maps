@@ -262,6 +262,11 @@ Colin walks on a flat plane at sea level: there is no collision, no ground
 height, and nothing stops him strolling across the Willamette — or through a
 building, a tree or a lamp post.
 
+The thumb sticks rest at an anchor, dim, and move to meet the thumb. They used
+to draw nothing at all until touched, which meant the controls were invisible —
+there was no way to tell they existed, never mind where. `tests/smoke.mjs`
+checks they are on screen and under a thumb before anything is pressed.
+
 ### The frame budget
 
 The brief asks for an FPS counter from Phase 4 on, and there is one at the
@@ -286,6 +291,33 @@ pins all three states — idle, walking, and quiet again afterwards.
 The launch scene's draw loop also parks itself once faded out, rather than
 clearing a full-screen canvas at device pixel ratio for something nobody can
 see.
+
+### Handedness: he was facing backwards, and it looked like inverted controls
+
+Colin's rig faces **+Z**, which in this scene is SOUTH, while the code assumed
+-Z (north) — the direction a GLTF's forward conventionally points. So at every
+heading he ran exactly backwards, and because the camera swings round behind
+him as he walks, what you actually saw was a man sprinting straight at the
+camera. It reads as "the controls are inverted", which is why the stick maths
+got blamed twice and measured correct both times.
+
+The fix is Big Don's rule: **derive handedness, never guess it.**
+`src/layers/character/rig.ts` measures which way the rig faces at load and
+rotates a node between `root` and the model to cancel it, so
+`root.rotation.y = bearingToYaw(heading)` stays literally true.
+
+The primary measurement is the **toes**: a foot points forwards, which is a
+geometric fact about a body, and averaging the two cancels the splay. The
+shoulder span is the obvious alternative and is strictly weaker — it needs the
+rig's left/right naming to be honest AND `up x right` the right way round, and
+Big Don shipped both backwards at once where they hid each other. Both are
+measured; they cross-check, and a disagreement over 45 degrees warns.
+
+`rig.ts` is split out of `loadColin.ts` purely so this can be tested headlessly
+against a synthetic skeleton — `loadColin` imports `GLTFLoader`, which imports
+the bare specifier `three` and will not resolve in node. `tests/three.mjs` then
+asks the same question of the real GLB at five headings; without the
+correction it reports 176 degrees off.
 
 ### Input
 

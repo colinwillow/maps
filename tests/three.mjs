@@ -189,8 +189,25 @@ try {
 
   // ── the character ─────────────────────────────────────────────────────────
   const colin = await page.evaluate(async () => {
+    const THREE = await import('/node_modules/three/build/three.module.js');
     const { loadColin, skinnedBounds } = await import('/src/layers/character/loadColin.ts');
+    const { measureFacing } = await import('/src/layers/character/rig.ts');
+    const { bearingToYaw } = await import('/src/layers/three/geo.ts');
     const m = await loadColin('/models/colin_slim.glb', 1.8);
+
+    // Does the REAL asset end up facing the heading it is given? rig.ts is
+    // tested against a synthetic skeleton; this is the same question asked of
+    // the actual GLB, which is where the answer was wrong.
+    const facingErrors = [0, 90, 180, 270, 45].map((heading) => {
+      m.root.rotation.y = bearingToYaw(heading);
+      m.root.updateMatrixWorld(true);
+      const got = measureFacing(m.root).forward;
+      const r = (heading * Math.PI) / 180;
+      const want = new THREE.Vector3(Math.sin(r), 0, -Math.cos(r));
+      return { heading, deg: +(Math.acos(Math.max(-1, Math.min(1, got.dot(want)))) * 180 / Math.PI).toFixed(1) };
+    });
+    m.root.rotation.y = 0;
+    m.root.updateMatrixWorld(true);
     const box = skinnedBounds(m.root);
     let textured = 0, selfLit = 0, shiny = 0, materials = 0;
     m.root.traverse((o) => {
@@ -210,7 +227,7 @@ try {
       hasWalk: m.clips.has('walk_fwd_normal'),
       hasRun: m.clips.has('run_fwd'),
       hasIdle: m.clips.has('idle_neutral_00'),
-      materials, textured, selfLit, shiny,
+      materials, textured, selfLit, shiny, facingErrors,
     };
   });
 
@@ -226,6 +243,15 @@ try {
   check('he is lit by his own texture', colin.selfLit === colin.textured && colin.textured > 0,
     `${colin.selfLit}/${colin.textured} self-lit`);
   check('nothing on him is shiny', colin.shiny === 0, `${colin.shiny} shiny materials`);
+  // He faces the way he is walking. This rig faces +Z (SOUTH) in its own
+  // space, so without the measured correction in rig.ts he ran exactly
+  // backwards at every heading — and since the camera swings in behind him,
+  // that read as "the controls are inverted" rather than as a model rotation.
+  {
+    const worst = colin.facingErrors.reduce((a, b) => (b.deg > a.deg ? b : a));
+    check('Colin faces the heading he is given, at every heading',
+      worst.deg < 8, `worst ${worst.deg} degrees off at heading ${worst.heading}`);
+  }
 
   // ── the generated city ────────────────────────────────────────────────────
   // The planner's maths is pinned in tests/city.test.ts; what this adds is the
