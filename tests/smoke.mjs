@@ -132,7 +132,11 @@ try {
     // Clouds are DELIBERATELY drawn on the planet, so switch them off for
     // this sample; the point of the check is that nothing else is.
     window.__noClouds = true;
-    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    // The scene's draw loop PARKS itself when nothing is changing, so flipping
+    // a flag does not repaint on its own — without this wake the sample reads
+    // the last frame drawn, clouds and all, and fails intermittently.
+    window.dispatchEvent(new Event('overworld:scenewake'));
+    await new Promise((r) => setTimeout(r, 250));
     const cv = document.querySelector('.orbit-canvas');
     const ctx = cv.getContext('2d');
     const dpr = cv.width / cv.clientWidth;
@@ -181,6 +185,13 @@ try {
   await page.waitForFunction(
     () => window.__map.loaded() && window.__map.queryRenderedFeatures().length > 0,
     { timeout: 30000 });
+
+  // The launch scene fades out over a CSS transition, so wait for it to LAND
+  // rather than sampling mid-fade — reading 0.17 there says nothing about
+  // whether it ever reaches zero.
+  await page.waitForFunction(
+    () => +getComputedStyle(document.querySelector('.space-backdrop')).opacity === 0,
+    { timeout: 5000 });
 
   const city = await page.evaluate(() => ({
     layersDrawn: [...new Set(window.__map.queryRenderedFeatures().map((f) => f.layer.id))].sort(),
@@ -267,17 +278,39 @@ try {
     streetBtn?.click();
     await new Promise((r) => setTimeout(r, 5000));
 
+    // Furnish the streets around him before measuring anything, so the frame
+    // budget is measured with a real city in the scene rather than an empty
+    // one. No tiles are reachable here, so the roads are synthetic — the
+    // planning, geometry and instancing below them are the shipping code.
+    const ticks = [-4, -3, -2, -1, 0, 1, 2, 3, 4].map((n) => n * 40);
+    const grid = [
+      ...ticks.map((south, i) => ({ id: 100 + i, kind: 'minor',
+        points: ticks.map((east) => ({ east, south })) })),
+      ...ticks.map((east, i) => ({ id: 200 + i, kind: 'minor',
+        points: ticks.map((south) => ({ east, south })) })),
+    ];
+    const props = window.__charRoads?.(grid) ?? 0;
+    // Long enough for the street-view camera to finish damping into place with
+    // the city in the scene, since an unsettled camera legitimately renders.
+    await new Promise((r) => setTimeout(r, 4000));
+
     const idle = await count(1200);
+    // The tile reader runs on every 'idle'. It must not strip the furniture
+    // off the streets just because this style has no vector source to read.
+    const propsAfterIdle = window.__charRoads?.() ?? 0;
     // Drive him straight from the layer's own input path.
     const before = map.getCenter();
     window.__charMove?.(0, -1);
     const walking = await count(1200);
     window.__charMove?.(0, 0);
     const after = map.getCenter();
-    await new Promise((r) => setTimeout(r, 2500));
-    const settled = await count(1200);
+    // Wait for quiet rather than assuming how long the camera takes to damp
+    // into place. The assertion is still "it reaches zero and stays there" —
+    // this only stops it depending on a stopwatch.
+    let settled = -1;
+    for (let i = 0; i < 6 && settled !== 0; i++) settled = await count(1200);
     return {
-      idle, walking, settled,
+      idle, walking, settled, props, propsAfterIdle,
       moved: Math.hypot(after.lng - before.lng, after.lat - before.lat),
     };
   });
@@ -285,6 +318,12 @@ try {
   if (budget.skipped) {
     check('character frame budget', false, 'character did not start');
   } else {
+    check('the character layer furnishes the streets around him',
+      budget.props > 200, `${budget.props} props`);
+    check('the furniture survives the map going idle',
+      budget.propsAfterIdle === budget.props, `${budget.propsAfterIdle} of ${budget.props} left`);
+    // Measured with the generated city in the scene: a thousand instanced
+    // props must not put the perpetual repaint back.
     check('standing still costs no map repaints', budget.idle === 0, `${budget.idle} renders`);
     check('walking renders, and moves him', budget.walking > 5 && budget.moved > 1e-6,
       `${budget.walking} renders, moved ${budget.moved.toExponential(1)} deg`);

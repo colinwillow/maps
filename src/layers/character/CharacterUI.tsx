@@ -37,9 +37,14 @@ export function CharacterUI({ map }: { map: maplibregl.Map | null }) {
       // Test hook: drive him without synthesising touches, so the smoke test
       // can measure the frame budget rather than the input layer.
       window.__charMove = (east: number, south: number) => layer.setMove(east, south);
+      window.__charRoads = (roads) => {
+        if (roads) layer.setRoads(roads as Parameters<typeof layer.setRoads>[0]);
+        return layer.getPropCount();
+      };
     });
     return () => {
       window.__charMove = undefined;
+      window.__charRoads = undefined;
       layer.detach(map);
       layerRef.current = null;
     };

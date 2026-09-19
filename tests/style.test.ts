@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { validateStyleMin } from '@maplibre/maplibre-gl-style-spec';
+import { createPropertyExpression, latest, validateStyleMin } from '@maplibre/maplibre-gl-style-spec';
 import { buildStyle } from '../src/layers/basemap/style';
 import { PALETTE, PROJECTION } from '../src/layers/basemap/tokens';
+import { CITY } from '../src/layers/city/plan';
 
 const style = buildStyle('TESTKEY123');
 const ids = style.layers.map((l) => l.id);
@@ -181,5 +182,93 @@ describe('token discipline', () => {
 
   it('contains no inline font names', () => {
     expect(src.match(/['"](?:Open Sans|Noto Sans|Roboto|Metropolis)[^'"]*['"]/g) ?? []).toEqual([]);
+  });
+});
+
+/**
+ * Street zoom is a different medium from map zoom, and the style has to work
+ * at both. The camera in street view sits at zoom 22.4, where one pixel is a
+ * centimetre — so a "6 pixel" road is six centimetres of ink and the ground
+ * reads as blank paper. That is what these pin.
+ */
+describe('roads at street zoom', () => {
+  const paintOf = (id: string, prop: string) =>
+    (style.layers.find((l) => l.id === id) as unknown as { paint: Record<string, unknown> })
+      .paint[prop];
+
+  /** Evaluate a paint expression the way MapLibre itself would. */
+  const evalAt = (id: string, prop: string, zoom: number, properties: object = {}) => {
+    const compiled = createPropertyExpression(
+      paintOf(id, prop) as never,
+      (latest as never as Record<string, Record<string, unknown>>)[`paint_${
+        (style.layers.find((l) => l.id === id) as { type: string }).type
+      }`][prop] as never,
+    );
+    expect(compiled.result).toBe('success');
+    return (compiled as { value: { evaluate(g: object, f?: object): unknown } })
+      .value.evaluate({ zoom }, { properties });
+  };
+
+  // Independent of style.ts: the plain web-mercator ground resolution.
+  const mPerPx = (z: number) =>
+    (40075017 * Math.cos((45.5 * Math.PI) / 180)) / (512 * 2 ** z);
+
+  it('is a surface you can stand on, not a hairline', () => {
+    // The regression this exists for: every ramp used to stop at zoom 18, and
+    // MapLibre clamps an interpolate to its last stop, so a minor street was
+    // six pixels wide at the street camera's zoom 22.4. It is ~900 now.
+    expect(evalAt('road-minor', 'line-width', 22.4) as number).toBeGreaterThan(300);
+    expect(evalAt('road-primary', 'line-width', 22.4) as number).toBeGreaterThan(600);
+  });
+
+  it('holds a constant width in METRES once it is a surface', () => {
+    // Linear interpolation between the same two stops would make this street
+    // 130m wide halfway up, which is the reason the ramp is exponential.
+    const metres = [16, 17.5, 19, 22].map(
+      (z) => (evalAt('road-minor', 'line-width', z) as number) * mPerPx(z),
+    );
+    for (const m of metres) expect(m).toBeCloseTo(metres[0], 4);
+    expect(metres[0]).toBeGreaterThan(6);
+    expect(metres[0]).toBeLessThan(14);
+  });
+
+  it('agrees with the city generator about where the kerb is', () => {
+    // The cross-file invariant. If the style draws a road wider than the
+    // generator thinks it is, the trees stand in the carriageway — and it
+    // would look like a placement bug rather than a width one.
+    const pairs: [string, keyof typeof CITY.halfWidth][] = [
+      ['road-motorway', 'motorway'],
+      ['road-primary', 'primary'],
+      ['road-secondary', 'secondary'],
+      ['road-tertiary', 'tertiary'],
+      ['road-minor', 'minor'],
+      ['road-service', 'service'],
+      ['road-path', 'path'],
+    ];
+    for (const [id, kind] of pairs) {
+      const metres = (evalAt(id, 'line-width', 20) as number) * mPerPx(20);
+      expect(metres).toBeCloseTo(CITY.halfWidth[kind] * 2, 3);
+    }
+  });
+
+  it('lays a pavement under the road, wider than the road', () => {
+    const road = (evalAt('road-minor', 'line-width', 20) as number);
+    const pave = (evalAt('pavement', 'line-width', 20, { class: 'minor' }) as number);
+    expect(pave).toBeGreaterThan(road);
+    // Wide enough to walk on: at least a metre and a half either side.
+    expect((pave - road) * mPerPx(20) / 2).toBeGreaterThan(1.5);
+    expect(ids.indexOf('pavement')).toBeLessThan(ids.indexOf('road-minor'));
+    expect(ids.indexOf('pavement')).toBeGreaterThan(ids.indexOf('building-3d'));
+  });
+
+  it('turns from ink into asphalt as you come down to it', () => {
+    // Ink is right for a line on a map and wrong for a surface underfoot.
+    expect(evalAt('road-minor', 'line-color', 14)).not
+      .toEqual(evalAt('road-minor', 'line-color', 19));
+    // Evaluated colours come back as rgba, so compare on channels.
+    const rgb = (hex: string) =>
+      [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(',');
+    expect(String(evalAt('road-minor', 'line-color', 14))).toContain(rgb(PALETTE.ink));
+    expect(String(evalAt('road-minor', 'line-color', 19))).toContain(rgb(PALETTE.asphalt));
   });
 });

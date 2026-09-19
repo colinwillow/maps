@@ -3,6 +3,8 @@ import type { MapFeatureLayer } from '../types';
 import { ThreeLayer } from '../three/ThreeLayer';
 import { loadColin } from './loadColin';
 import { Character } from './Character';
+import { CityProps } from '../city';
+import type { Road } from '../city/plan';
 import type { LngLat } from '../three/geo';
 
 export const CAMERA = {
@@ -54,11 +56,13 @@ export type CharacterMode = 'overhead' | 'street';
  */
 export function characterLayer(origin: LngLat, modelUrl: string) {
   const three = new ThreeLayer(origin, 'character-3d');
+  const city = new CityProps(three);
 
   let character: Character | null = null;
   let map: maplibregl.Map | null = null;
   let mode: CharacterMode = 'overhead';
   let following = true;
+  let onIdle: (() => void) | null = null;
 
   /** Right thumb: -1..1 each. x yaws the camera, y pitches it. */
   const look = { x: 0, y: 0 };
@@ -78,6 +82,8 @@ export function characterLayer(origin: LngLat, modelUrl: string) {
     setFollowing(f: boolean): void;
     setMove(east: number, south: number): void;
     setLook(x: number, y: number): void;
+    setRoads(roads: Road[]): void;
+    getPropCount(): number;
     getFps(): number;
     ready: Promise<void>;
   } = {
@@ -92,6 +98,23 @@ export function characterLayer(origin: LngLat, modelUrl: string) {
       m.setMaxPitch(85);
       m.addLayer(three.asCustomLayer());
 
+      // Tiles arrive asynchronously and keep arriving as he walks, so the road
+      // network is re-read whenever the map goes quiet. Throttled because
+      // querySourceFeatures walks every loaded tile, and 'idle' can fire
+      // several times in a second while a new block loads in.
+      let lastRead = 0;
+      onIdle = () => {
+        const now = performance.now();
+        if (now - lastRead < 1500) return;
+        lastRead = now;
+        // Only re-plan when the road network actually changed, not merely
+        // because the map went quiet again.
+        if (city.readRoads(m) && character) {
+          city.refresh({ east: character.east, south: character.south }, true);
+        }
+      };
+      m.on('idle', onIdle);
+
       three.setFrameCallback((dt) => {
         if (!character) return;
         if (dt > 0) {
@@ -99,6 +122,9 @@ export function characterLayer(origin: LngLat, modelUrl: string) {
           if (frameTimes.length > 45) frameTimes.shift();
         }
         character.update(dt);
+        // Re-furnish the streets around him. This is a no-op until he has
+        // walked a block, so calling it per frame costs a hypot.
+        city.refresh({ east: character.east, south: character.south });
         const autoSwing = performance.now() - lastLookAt > CAMERA.autoSwingAfter * 1000;
         if (following && map) {
           followCharacter(map, character, three.frame, mode, dt, look, autoSwing);
@@ -130,6 +156,9 @@ export function characterLayer(origin: LngLat, modelUrl: string) {
     },
 
     detach(m: maplibregl.Map) {
+      if (onIdle) m.off('idle', onIdle);
+      onIdle = null;
+      city.dispose();
       if (m.getLayer(three.id)) m.removeLayer(three.id);
       map = null;
     },
@@ -150,6 +179,19 @@ export function characterLayer(origin: LngLat, modelUrl: string) {
       character.input = { east, south };
       three.requestRedraw();
     },
+
+    /**
+     * Hand the city generator a road network directly, bypassing the tiles.
+     * The browser test uses this: there is no network in the test environment,
+     * so synthetic streets drive the real planner, geometry and instancing.
+     */
+    setRoads(roads: Road[]) {
+      city.setRoads(roads);
+      city.refresh({ east: character?.east ?? 0, south: character?.south ?? 0 }, true);
+    },
+
+    /** Street props currently in the scene. */
+    getPropCount: () => city.propCount,
 
     /** Right-thumb camera input, -1..1 each. */
     setLook(x: number, y: number) {

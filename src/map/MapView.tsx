@@ -21,6 +21,12 @@ declare global {
     __noClouds?: boolean;
     /** Test hook: drive the character directly, bypassing the thumb sticks. */
     __charMove?: (east: number, south: number) => void;
+    /**
+     * Test hook: hand the city generator a road network. There is no map
+     * service reachable from the test environment, so this is how a browser
+     * test gets streets to furnish.
+     */
+    __charRoads?: (roads?: unknown[]) => number;
   }
 }
 

@@ -227,6 +227,98 @@ try {
     `${colin.selfLit}/${colin.textured} self-lit`);
   check('nothing on him is shiny', colin.shiny === 0, `${colin.shiny} shiny materials`);
 
+  // ── the generated city ────────────────────────────────────────────────────
+  // The planner's maths is pinned in tests/city.test.ts; what this adds is the
+  // part unit tests cannot reach — that the props come out of the real
+  // pipeline (plan, geometry, instancing, MapLibre's own matrix) and land on
+  // the pavement rather than in the road, measured in rendered pixels.
+  const city = await page.evaluate(async () => {
+    const { ThreeLayer } = await import('/src/layers/three/ThreeLayer.ts');
+    const { CityProps } = await import('/src/layers/city/index.ts');
+    const { planCity, CITY } = await import('/src/layers/city/plan.ts');
+
+    const ORIGIN = { lng: -122.6784, lat: 45.5152 };
+    const ZOOM = 19;
+    const host = document.createElement('div');
+    host.style.cssText = 'position:fixed;left:0;top:0;width:600px;height:600px;z-index:-1;';
+    document.body.appendChild(host);
+
+    const map = new (window.__map.constructor)({
+      container: host, center: ORIGIN, zoom: ZOOM, pitch: 0, bearing: 0,
+      attributionControl: false,
+      canvasContextAttributes: { preserveDrawingBuffer: true },
+      style: { version: 8, sources: {}, layers: [
+        { id: 'bg', type: 'background', paint: { 'background-color': '#ffffff' } }] },
+    });
+    await new Promise((r) => map.once('load', r));
+
+    const layer = new ThreeLayer(ORIGIN, 'city-verify');
+    map.addLayer(layer.asCustomLayer());
+    const city = new CityProps(layer);
+
+    // One street running due east straight through the middle of the view.
+    const roads = [{ id: 7, kind: 'minor', points: [
+      { east: -150, south: 0 }, { east: 150, south: 0 }] }];
+    city.setRoads(roads);
+    city.refresh({ east: 0, south: 0 }, true);
+    map.triggerRepaint();
+    await new Promise((r) => setTimeout(r, 900));
+
+    const src = map.getCanvas();
+    const cv = document.createElement('canvas');
+    cv.width = src.width; cv.height = src.height;
+    const ctx = cv.getContext('2d');
+    ctx.drawImage(src, 0, 0);
+    const { data } = ctx.getImageData(0, 0, src.width, src.height);
+    const dpr = src.width / src.clientWidth;
+    const midY = src.height / 2;
+
+    let north = 0, south = 0, inRoad = 0, total = 0;
+    // Foliage is the only green thing on a white background.
+    for (let y = 0; y < src.height; y++) {
+      for (let x = 0; x < src.width; x++) {
+        const i = (y * src.width + x) * 4;
+        const [r, g, b] = [data[i], data[i + 1], data[i + 2]];
+        if (!(g > r + 12 && g > b + 12)) continue;
+        total++;
+        const dy = (y - midY) / dpr;
+        if (dy < 0) north++; else south++;
+        // The carriageway, in CSS pixels, from MapLibre's own world size.
+        const mpp = (40075016.686 * Math.cos(ORIGIN.lat * Math.PI / 180)) / (512 * 2 ** ZOOM);
+        if (Math.abs(dy) < (CITY.halfWidth.minor / mpp) * 0.75) inRoad++;
+      }
+    }
+
+    const planned = planCity(roads, { east: 0, south: 0 });
+    const meshes = layer.scene.children.filter((o) => o.type === 'Group')
+      .flatMap((g) => g.children);
+    const out = {
+      total, north, south, inRoad,
+      propCount: city.propCount,
+      planned: planned.length,
+      instanced: meshes.length,
+      kinds: [...new Set(planned.map((p) => p.kind))].sort(),
+      // Nothing may be drawn while the globe is still a sphere.
+      visible: layer.visibleNow,
+    };
+    map.remove();
+    host.remove();
+    return out;
+  });
+
+  check('the generated city reaches the screen', city.total > 400, `${city.total} foliage pixels`);
+  check('trees line BOTH kerbs', city.north > 100 && city.south > 100,
+    `${city.north} north / ${city.south} south`);
+  // The check that would pass with the whole city mirrored is the one above;
+  // this is the one that would not. A sign error in the side normal, or jitter
+  // applied across the street instead of along it, plants trees in the road.
+  check('nothing is standing in the road', city.inRoad === 0, `${city.inRoad} pixels in the carriageway`);
+  check('every planned prop is instanced into the scene',
+    city.propCount === city.planned && city.planned > 20 && city.instanced > 0,
+    `${city.propCount}/${city.planned} props in ${city.instanced} instanced meshes`);
+  check('a plain street gets trees, lamps and poles',
+    ['lamp', 'pole', 'tree'].every((k) => city.kinds.includes(k)), city.kinds.join(','));
+
   check('no console or page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
 } finally {
   await browser.close();

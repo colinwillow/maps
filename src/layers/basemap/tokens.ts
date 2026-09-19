@@ -40,6 +40,15 @@ export const PALETTE = {
   waterDeep: '#5C8D9B',
   waterEdge: '#4A7683', // shoreline casing — what gives the river an edge
 
+  // At STREET zoom a road stops being a line and becomes a surface you are
+  // standing on, so the ink fades to asphalt and a pale pavement appears
+  // underneath it. Without this the roads stay hairlines and the ground reads
+  // as blank paper, which is exactly what it looked like.
+  asphalt: '#9C9488',
+  asphaltMajor: '#8E867A',
+  pavement: '#E4DCCB',
+  kerb: '#CFC5B0',
+
   // Roads are warm ink lines, never yellow or orange fills.
   ink: '#8A7F70', // minor roads
   inkMid: '#6E6355', // secondary / tertiary

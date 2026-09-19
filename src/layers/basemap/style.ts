@@ -25,6 +25,76 @@ const ATTRIBUTION =
 const widthRamp = (stops: [number, number][]) =>
   ['interpolate', ['linear'], ['zoom'], ...stops.flat()] as unknown as number;
 
+/**
+ * Metres per pixel at zoom 16, at Portland's latitude.
+ *
+ * Web mercator: 40075017 * cos(lat) / (512 * 2^zoom). The 512 is MapLibre's
+ * tile size — the 256 in most of the snippets on the internet is Google-era
+ * and makes every derived number exactly twice what it should be.
+ */
+const M_PER_PX_16 = (40075017 * Math.cos((45.5 * Math.PI) / 180)) / (512 * 2 ** 16);
+
+/**
+ * A road that is a real number of metres wide once you are close enough for
+ * that to mean anything.
+ *
+ * THIS IS WHY THE GROUND LOOKED BLANK. Every road ramp used to stop at zoom
+ * 18, and MapLibre clamps an interpolate to its last stop — so at the street
+ * camera's zoom 22.4, where a pixel is a centimetre, a "6 pixel" minor road
+ * was six centimetres of ink. You could stand in the middle of a street and
+ * see nothing but paper.
+ *
+ * The high end uses `['exponential', 2]` rather than linear for a reason:
+ * with base 2, halfway in ZOOM is halfway in DOUBLINGS, so a width that is
+ * 64x wider six zooms up is exactly constant in metres the whole way. Linear
+ * interpolation between the same two stops makes a 9m street 130m wide at
+ * zoom 19.
+ *
+ * The metres here are the full carriageway, and they are the same numbers the
+ * city generator uses for its kerb line (2 x CITY.halfWidth in
+ * layers/city/plan.ts). If the two ever disagree, the trees stand in the road.
+ */
+const streetWidth = (metres: number, low: [number, number][]) =>
+  ['interpolate', ['exponential', 2], ['zoom'], ...low.flat(),
+    16, metres / M_PER_PX_16,
+    22, (metres / M_PER_PX_16) * 64] as unknown as number;
+
+/**
+ * Ink at map zoom, asphalt at street zoom. A road drawn as a warm ink stroke
+ * is right when it is a line on a map and wrong when it is a surface you are
+ * standing on; this crosses over where it stops being one and starts being
+ * the other.
+ */
+const surfaceColor = (ink: string, surface: string) =>
+  ['interpolate', ['linear'], ['zoom'], 15.5, ink, 17.5, surface] as unknown as string;
+
+/** Full carriageway width in metres, per road class. */
+const ROAD_M = {
+  motorway: 24, primary: 18, secondary: 15, tertiary: 12, minor: 9, service: 6, path: 2.4,
+} as const;
+
+/** Metres of pavement either side of the carriageway. */
+const PAVEMENT_M = 3.2;
+
+/**
+ * The carriageway width in metres for whatever class the feature happens to
+ * be, as a data expression — so the pavement casing is ONE layer rather than
+ * six near-identical ones stacked under the six road layers.
+ */
+const carriagewayM = () =>
+  ['match', ['get', 'class'],
+    'motorway', ROAD_M.motorway,
+    ['primary', 'trunk'], ROAD_M.primary,
+    'secondary', ROAD_M.secondary,
+    'tertiary', ROAD_M.tertiary,
+    'minor', ROAD_M.minor,
+    ROAD_M.service,
+  ];
+
+/** Kerb-to-kerb plus a pavement each side, in screen pixels at a given zoom. */
+const pavementPx = (zoomFactor: number) =>
+  ['/', ['+', carriagewayM(), PAVEMENT_M * 2], M_PER_PX_16 / zoomFactor];
+
 const fillLayer = (
   id: string,
   sourceLayer: string,
@@ -250,22 +320,78 @@ export function buildStyle(maptilerKey: string): StyleSpecification {
         },
       } as LayerSpecification,
 
-      // ── roads: warm ink lines, casings only where they earn their keep ──
+      // ── roads ───────────────────────────────────────────────────────────
+      // Warm ink lines on a map; actual asphalt with pavements either side
+      // once the camera is low enough to be standing on them.
+
+      {
+        // One casing layer for every drivable class, widened by data rather
+        // than by six near-identical layers. It only appears from 15.5, where
+        // a 3.2m pavement is finally more than a pixel.
+        id: 'pavement',
+        type: 'line',
+        source: SRC,
+        'source-layer': 'transportation',
+        minzoom: 15.5,
+        filter: ['all', notBridge, isClass(
+          'motorway', 'primary', 'trunk', 'secondary', 'tertiary', 'minor', 'service',
+        )] as never,
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-color': C.pavement,
+          'line-width': ['interpolate', ['exponential', 2], ['zoom'],
+            15.5, 0,
+            16, pavementPx(1),
+            22, pavementPx(64),
+          ] as never,
+        },
+      } as LayerSpecification,
+
       roadLayer('road-path', [
         'all', notBridge, isClass('path', 'track'),
       ], C.ink, [[14, 0.4], [18, 1.4]], {
-        paint: { 'line-color': C.ink, 'line-width': widthRamp([[14, 0.4], [18, 1.4]]), 'line-dasharray': [2, 2] },
+        paint: {
+          'line-color': C.ink,
+          'line-width': streetWidth(ROAD_M.path, [[14, 0.4]]) as never,
+          'line-dasharray': [2, 2],
+        },
       }),
-      roadLayer('road-minor', ['all', notBridge, isClass('minor', 'service')], C.ink,
-        [[12, 0.4], [15, 1.4], [18, 6]]),
-      roadLayer('road-tertiary', ['all', notBridge, isClass('tertiary')], C.inkMid,
-        [[11, 0.6], [15, 2.2], [18, 8]]),
-      roadLayer('road-secondary', ['all', notBridge, isClass('secondary')], C.inkMid,
-        [[10, 0.8], [15, 3], [18, 11]]),
-      roadLayer('road-primary', ['all', notBridge, isClass('primary', 'trunk')], C.inkStrong,
-        [[9, 1], [15, 4], [18, 14]]),
-      roadLayer('road-motorway', ['all', notBridge, isClass('motorway')], C.inkStrong,
-        [[8, 1.2], [15, 5], [18, 18]]),
+      roadLayer('road-service', ['all', notBridge, isClass('service')], C.ink, [], {
+        paint: {
+          'line-color': surfaceColor(C.ink, C.asphalt) as never,
+          'line-width': streetWidth(ROAD_M.service, [[13, 0.3], [14, 0.6]]) as never,
+        },
+      }),
+      roadLayer('road-minor', ['all', notBridge, isClass('minor')], C.ink, [], {
+        paint: {
+          'line-color': surfaceColor(C.ink, C.asphalt) as never,
+          'line-width': streetWidth(ROAD_M.minor, [[12, 0.4], [14, 1]]) as never,
+        },
+      }),
+      roadLayer('road-tertiary', ['all', notBridge, isClass('tertiary')], C.inkMid, [], {
+        paint: {
+          'line-color': surfaceColor(C.inkMid, C.asphalt) as never,
+          'line-width': streetWidth(ROAD_M.tertiary, [[11, 0.6], [14, 1.6]]) as never,
+        },
+      }),
+      roadLayer('road-secondary', ['all', notBridge, isClass('secondary')], C.inkMid, [], {
+        paint: {
+          'line-color': surfaceColor(C.inkMid, C.asphaltMajor) as never,
+          'line-width': streetWidth(ROAD_M.secondary, [[10, 0.8], [14, 2.2]]) as never,
+        },
+      }),
+      roadLayer('road-primary', ['all', notBridge, isClass('primary', 'trunk')], C.inkStrong, [], {
+        paint: {
+          'line-color': surfaceColor(C.inkStrong, C.asphaltMajor) as never,
+          'line-width': streetWidth(ROAD_M.primary, [[9, 1], [14, 3]]) as never,
+        },
+      }),
+      roadLayer('road-motorway', ['all', notBridge, isClass('motorway')], C.inkStrong, [], {
+        paint: {
+          'line-color': surfaceColor(C.inkStrong, C.asphaltMajor) as never,
+          'line-width': streetWidth(ROAD_M.motorway, [[8, 1.2], [14, 3.6]]) as never,
+        },
+      }),
       {
         id: 'rail',
         type: 'line',
@@ -281,14 +407,19 @@ export function buildStyle(maptilerKey: string): StyleSpecification {
 
       // ── bridges: the strongest strokes on the map ──────────────────────
       // Drawn above water and road so a span reads as crossing something.
-      roadLayer('bridge-casing', isBridge, C.bridge,
-        [[11, 2.4], [15, 7], [18, 22]], {
+      roadLayer('bridge-casing', isBridge, C.bridge, [], {
         layout: { 'line-cap': 'butt', 'line-join': 'round' },
-        paint: { 'line-color': C.bridge, 'line-width': widthRamp([[11, 2.4], [15, 7], [18, 22]]), 'line-opacity': 0.55 },
+        paint: {
+          'line-color': C.bridge,
+          'line-width': streetWidth(22, [[11, 2.4], [14, 5]]) as never,
+          'line-opacity': 0.55,
+        },
       }),
-      roadLayer('bridge', isBridge, C.paper,
-        [[11, 1], [15, 3.4], [18, 12]], {
-        paint: { 'line-color': C.paper, 'line-width': widthRamp([[11, 1], [15, 3.4], [18, 12]]) },
+      roadLayer('bridge', isBridge, C.paper, [], {
+        paint: {
+          'line-color': surfaceColor(C.paper, C.asphalt) as never,
+          'line-width': streetWidth(15, [[11, 1], [14, 2.6]]) as never,
+        },
       }),
 
       {

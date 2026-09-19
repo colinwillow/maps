@@ -195,10 +195,72 @@ Google's photogrammetry, the thing that makes nuclearsimulation.com look the
 way it does, is not available here: their terms require their own SDK and
 branding. That is a licensing wall, not a technical one.
 
+## The generated city
+
+`src/layers/city/`. Trees, street lamps, telephone poles, traffic signals and
+stop signs, all derived from the road network that is already on screen.
+
+**Why generated rather than authored.** The other games in this account place a
+hand-built low-poly GLB. That is the right answer for one hand-made level and
+the wrong answer for a planet — you cannot author Portland, let alone
+everywhere else. So the furniture comes out of the OSM road geometry the
+basemap is already drawing: `plan.ts` turns roads in metres into props in
+metres, and walking to a street that really exists finds it furnished.
+
+Buildings deliberately do NOT come from here. OpenMapTiles carries real
+footprints and real `render_height`, so `building-3d` in the basemap is already
+drawing the true city, skyscrapers included. Re-extruding the same boxes in
+three would be a second copy fighting the first for the same pixels.
+
+`plan.ts` is pure — roads in, props out, no three and no MapLibre — which is
+what lets the placement be pinned down in unit tests rather than squinted at on
+a phone. That matters more than usual here, because almost every check you
+would write about street furniture passes just as happily with the entire city
+MIRRORED: "trees appear on both sides" passes with the sides swapped, "signs
+are near the junction" passes with every sign on the far corner facing away
+from the driver who has to read it. So the checks assert signed positions on
+both axes and the facing of each prop, on all four arms of a crossroads.
+
+Things worth knowing:
+
+* **Junctions are shared vertices, not line intersections.** Vector tiles split
+  ways where they meet, so this is a grid bucket over vertices rather than a
+  segment sweep.
+* **Jitter runs along the street, never across it.** Across, and the trees walk
+  into the carriageway.
+* **The plan is deterministic** (`hash01`, seeded on the road id). With
+  `Math.random` every tree would teleport each time he crosses a block, since
+  the plan is rebuilt every 70 metres.
+* **Junction controls are budgeted before furniture.** A junction with no
+  signal reads as a bug; a slightly thinner row of trees never does.
+* **Clipping is against the circle, not the vertices.** A long straight street
+  with both endpoints outside the radius has no vertex inside it at all — and
+  that is the street you are most likely standing on.
+* **An empty tile query does not demolish the city.** Tiles come and go as you
+  move.
+
+### The roads had to become surfaces first
+
+Street level looked like blank paper, and the reason was cartographic rather
+than 3D: every road width ramp stopped at zoom 18, and MapLibre clamps an
+interpolate to its last stop. At the street camera's zoom 22.4, where a pixel
+is a centimetre, a "6 pixel" minor road was six centimetres of ink. Roads now
+carry a real width in METRES from zoom 16 up, interpolated with
+`['exponential', 2]` so that constant width holds all the way — linear
+interpolation between the same two stops makes a 9m street 130m wide halfway.
+They also fade from ink to asphalt and pick up a pavement casing on the way
+down, because a warm ink stroke is right for a line on a map and wrong for a
+surface you are standing on.
+
+The style's carriageway widths and the generator's kerb line are the same
+numbers, and a test asserts they agree. If they ever drift, the trees stand in
+the road — and it would look like a placement bug rather than a width one.
+
 ### Still to do
 
 Colin walks on a flat plane at sea level: there is no collision, no ground
-height, and nothing stops him strolling across the Willamette.
+height, and nothing stops him strolling across the Willamette — or through a
+building, a tree or a lamp post.
 
 ### The frame budget
 
