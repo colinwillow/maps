@@ -7,7 +7,7 @@
 // inside out and the camera is pointing at the city. Every one of those is
 // invisible to a syntax check and every one of them is a blank screen.
 //
-//   node tools/pdx/shot.mjs [--at lat,lon] [--az deg] [--pitch r] [--out p.png]
+//   node tools/pdx/shot.mjs [--at lat,lon] [--az r] [--pitch r] [--js expr] [--out p.png]
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -41,6 +41,17 @@ const page = await browser.newPage({
   viewport: { width: +(args.w || 1280), height: +(args.h || 800) },
   deviceScaleFactor: 1,
 });
+// THE HARNESS MUST NOT DEPEND ON THE INTERNET. The page asks a font CDN for
+// Barlow Condensed; here that request is denied by policy and takes the whole
+// run down with it, and on a real phone it can simply be slow. Everything off
+// 127.0.0.1 is aborted, which is also a truer test: what is measured is the
+// page as it behaves when the third-party half never arrives.
+await page.route('**/*', (route) => {
+  const u = route.request().url();
+  if (u.startsWith('http://127.0.0.1:') || u.startsWith('data:') || u.startsWith('blob:'))
+    return route.continue();
+  return route.abort();
+});
 const errors = [];
 page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
 page.on('pageerror', (e) => errors.push('PAGEERROR ' + e.message));
@@ -60,6 +71,23 @@ if (args.az !== undefined) await page.evaluate((a) => { window.pdx.camera.az = +
 if (args.pitch !== undefined) await page.evaluate((p) => { window.pdx.camera.pitch = +p; window.pdx.camera.high = false; }, args.pitch);
 if (args.dist !== undefined) await page.evaluate((d) => { window.pdx.camera.have = +d; }, args.dist);
 if (args.up !== undefined) await page.evaluate((y) => window.pdx.ghost(true, +y), args.up);
+// Walk him there instead of dropping him there. A teleport lands you wherever
+// the coordinate is -- often pressed against a facade, where the shot is a
+// close-up of brickwork. Holding the stick for a couple of seconds puts him in
+// the street the way a player arrives.
+if (args.walk !== undefined) {
+  const [secs, dir] = String(args.walk).split(',').map(Number);
+  await page.evaluate(([s, d]) => {
+    window.pdx.__walk = { t: s, x: Math.sin(d || 0), y: -Math.cos(d || 0) };
+  }, [secs || 2, dir || 0]);
+  await page.waitForTimeout((secs || 2) * 1000 + 400);
+}
+
+// An arbitrary expression against `window.pdx`, run in the page just before it
+// settles. Some of what there is to look at is on a TIMER -- an airliner is
+// every half minute or so on purpose -- and waiting one out is not a thing a
+// harness should do.
+if (args.js) console.log('js:', JSON.stringify(await page.evaluate((src) => eval(src), args.js)));
 
 // Let it stream: the frame budget builds one chunk per frame on purpose, so an
 // immediate screenshot is a picture of the loader rather than of the city.

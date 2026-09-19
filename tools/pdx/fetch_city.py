@@ -20,6 +20,10 @@ COLUMNS = {
   ("base","land_use"):   ["id","names","class","subtype","surface","geometry","bbox"],
   ("base","land"):       ["id","names","class","subtype","surface","geometry","bbox"],
   ("base","infrastructure"): ["id","names","class","subtype","height","source_tags","geometry","bbox"],
+  # The businesses. This is what turns a block of boxes into a STREET: a corner
+  # with Powell's on it is a different corner from an identical corner with
+  # nothing on it, and the names are the part no generator can invent.
+  ("places","place"): ["id","names","categories","confidence","geometry","bbox"],
 }
 
 def fetch_bbox():

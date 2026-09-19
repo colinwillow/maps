@@ -22,16 +22,29 @@
 
 import * as THREE from 'three';
 import { GLTFLoader } from '../vendor/GLTFLoader.js';
-import { MOVE } from './tune.js';
+import { DRACOLoader } from '../vendor/DRACOLoader.js';
+import { MOVE, CHAR } from './tune.js';
 
 const TARGET_H = 1.78;
-const CLIPS = { idle: 'idle_neutral_00', walk: 'walk_fwd_normal',
-                run: 'run_fwd', sprint: 'run_fwd_fast', jump: 'run_jump' };
+// The Shredworld export, cut to the clips a city needs by
+// `tools/pdx/slim_char.mjs`: 51 animations and 10.2 MB down to 12 and 5.6 MB.
+// The TEXTURES are untouched at their authored size -- separate maps for the
+// head, the outfit, the shoes, the headphones and the eyes are the whole reason
+// for taking this export over the older slimmer one.
+const CLIPS = { idle: 'idle_neutral', walk: 'walk_fwd_neutral',
+                run: 'run_fwd', rise: 'jump_going_up', fall: 'jump_coming_down',
+                land: 'landing_roll', wave: 'waving' };
 
 export async function loadColin(onProgress) {
-  const url = new URL('../../models/colin_slim.glb', import.meta.url).href;
+  const url = new URL('../models/colin.glb', import.meta.url).href;
+  const loader = new GLTFLoader();
+  // This export lists KHR_draco_mesh_compression in extensionsRequired, so
+  // without the decoder the load fails outright rather than degrading.
+  const draco = new DRACOLoader();
+  draco.setDecoderPath(new URL('../vendor/draco/', import.meta.url).href);
+  loader.setDRACOLoader(draco);
   const gltf = await new Promise((res, rej) =>
-    new GLTFLoader().load(url, res, (e) => onProgress && e.total && onProgress(e.loaded / e.total), rej));
+    loader.load(url, res, (e) => onProgress && e.total && onProgress(e.loaded / e.total), rej));
 
   const model = gltf.scene;
   model.traverse((o) => {
@@ -62,7 +75,7 @@ export async function loadColin(onProgress) {
     if (m.map && !m.emissiveMap) {
       m.emissiveMap = m.map;
       m.emissive = new THREE.Color(0xffffff);
-      m.emissiveIntensity = 0.26;
+      m.emissiveIntensity = CHAR.emissive;
     }
     m.needsUpdate = true;
   });
@@ -94,15 +107,18 @@ export async function loadColin(onProgress) {
 
   const mixer = new THREE.AnimationMixer(model);
   const actions = {};
+  const missing = [];
   for (const [k, name] of Object.entries(CLIPS)) {
     const clip = gltf.animations.find((a) => a.name === name);
-    if (!clip) continue;
+    if (!clip) { missing.push(name); continue; }
     const a = mixer.clipAction(clip);
     a.play(); a.setEffectiveWeight(0); a.enabled = true;
     actions[k] = a;
   }
   if (actions.idle) actions.idle.setEffectiveWeight(1);
-  return { root, holder, model, mixer, actions, scale, facing, height: TARGET_H };
+  if (missing.length && window.__crash) window.__crash('clips missing: ' + missing.join(', '));
+  return { root, holder, model, mixer, actions, scale, facing, height: TARGET_H,
+           clips: gltf.animations.map((a) => a.name) };
 }
 
 function worldPos(o) { return new THREE.Vector3().setFromMatrixPosition(o.matrixWorld); }
@@ -153,12 +169,19 @@ export function measureFacing(root) {
  * legs. Weights always sum to one -- a table that dips below it bleeds the BIND
  * POSE in, which is a T-pose, and it looks like a bug in the model.
  */
-export function animate(c, dt, speed, grounded) {
+export function animate(c, dt, speed, grounded, vy = 0) {
   if (!c) return;
   const A = c.actions;
-  const w = { idle: 0, walk: 0, run: 0, sprint: 0, jump: 0 };
-  if (!grounded && A.jump) {
-    w.jump = 1;
+  const w = { idle: 0, walk: 0, run: 0, sprint: 0, rise: 0, fall: 0 };
+  if (!grounded && (A.rise || A.fall)) {
+    // Rising and falling are two poses and the blend between them is the arc.
+    // One airborne clip is what the other games here settled on for a one-second
+    // hop, but a city has roofs and bridges to drop off and the fall is long
+    // enough to read.
+    const t = Math.max(0, Math.min(1, (2.5 - vy) / 5));
+    w.rise = 1 - t; w.fall = t;
+    if (!A.fall) { w.rise = 1; w.fall = 0; }
+    if (!A.rise) { w.fall = 1; w.rise = 0; }
   } else if (speed < 0.25) {
     w.idle = 1;
   } else if (speed < MOVE.walk) {
@@ -170,7 +193,6 @@ export function animate(c, dt, speed, grounded) {
     w.run = 1 - t; w.sprint = t;
   }
   if (!A.sprint) { w.run += w.sprint; w.sprint = 0; }
-  if (!A.jump) { w.idle += w.jump; w.jump = 0; }
   const k = 1 - Math.pow(2, -dt / 0.09);
   for (const key of Object.keys(w)) {
     const a = A[key]; if (!a) continue;

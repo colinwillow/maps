@@ -101,6 +101,62 @@ def build_ground(water_polys):
     return g
 
 
+def river_route(water_polys):
+    """A centreline down the Willamette, so boats have somewhere to be.
+
+    NOT "the biggest polygon": the biggest water body reachable from this bbox
+    is the COLUMBIA, four times the Willamette's area and entirely north of the
+    play area -- picking by area put the route off the map and the whole scan
+    came back empty. The union is clipped to the play area first and the widest
+    run in each row wins, which cannot pick a river that is not here.
+
+    Scanning by z and taking the widest span is right HERE and is not general:
+    the Willamette runs roughly north-south through this bbox, so an east-west
+    cut crosses it exactly once and the longest run of that cut IS the channel.
+    A river running east-west would say so loudly -- the route would come out
+    as a handful of disconnected rows instead of one long chain.
+
+    The half width comes out of the same cut and is what keeps a boat off the
+    seawall without anything being typed.
+    """
+    if not water_polys:
+        return []
+    clip = shbox(W - 200, N - 200, E + 200, S + 200)
+    big = shapely.intersection(unary_union(water_polys), clip)
+    if big.is_empty:
+        return []
+    step = 40.0
+    row = []
+    z = N
+    while z <= S:
+        cut = shapely.intersection(big, LineString([(W - 400, z), (E + 400, z)]))
+        best = None
+        for part in getattr(cut, "geoms", [cut]):
+            if part.is_empty or part.geom_type != "LineString":
+                continue
+            xs = [c[0] for c in part.coords]
+            w = max(xs) - min(xs)
+            if best is None or w > best[1]:
+                best = ((max(xs) + min(xs)) * 0.5, w)
+        # A river is WIDE. Anything narrower than this is a slough, a dock or a
+        # pond, and stringing those into the chain puts a tugboat in a car park.
+        if best and best[1] > 60.0:
+            row.append((best[0], z, best[1] * 0.5))
+        z += step
+
+    if len(row) < 6:
+        return []
+    # Smooth the x series: a scanline through a polygon with piers and moorings
+    # in it jitters by ten metres a row, and a boat following that weaves.
+    xs = np.array([r[0] for r in row])
+    hw = np.array([r[2] for r in row])
+    for _ in range(4):
+        xs = np.convolve(np.pad(xs, 1, mode="edge"), [0.25, 0.5, 0.25], "valid")
+        hw = np.convolve(np.pad(hw, 1, mode="edge"), [0.25, 0.5, 0.25], "valid")
+    return [[round(float(x), 1), round(float(r[1]), 1), round(float(h), 1)]
+            for x, r, h in zip(xs, row, hw)]
+
+
 # --------------------------------------------------------------------------
 # 2. buildings
 # --------------------------------------------------------------------------
@@ -489,6 +545,57 @@ def bridge_landmarks(segs):
     return out
 
 
+def make_pavements(segs):
+    """A pavement down both sides of every street that has not got one.
+
+    OSM maps separate sidewalk ways where somebody has bothered -- downtown and
+    a few main streets -- and nowhere else, which is most of the city. Without
+    these, SE Hawthorne is a road with LAWN either side of it and nobody on
+    foot, because the crowd walks the pavement network and there is none.
+
+    Generated ones are suppressed where a real one already runs, so the two
+    never sit a metre apart as a double kerb. They carry the `sidewalk` class,
+    so they are drawn, walked on and collided with by exactly the same code as
+    the mapped ones -- there is no second kind of pavement.
+    """
+    mapped = Hash2D(6.0)
+    for s in segs:
+        if s["cls"] in ("sidewalk", "footway", "pedestrian"):
+            for p in s["pts"]:
+                mapped.add(p[0], p[1])
+    out = []
+    kept = 0
+    for s in segs:
+        if s["cls"] not in C.PAVED or s["bridge"]:
+            continue
+        half = s["w"] * 0.5 + 1.15
+        for side in (-1, 1):
+            line = []
+            for k, p in enumerate(s["pts"]):
+                a = s["pts"][max(0, k - 1)]
+                b = s["pts"][min(len(s["pts"]) - 1, k + 1)]
+                dx, dz = b[0] - a[0], b[1] - a[1]
+                L = math.hypot(dx, dz)
+                if L < 1e-6:
+                    continue
+                nx, nz = -dz / L, dx / L
+                px, pz = p[0] + nx * half * side, p[1] + nz * half * side
+                if mapped.near(px, pz, 4.0):
+                    if len(line) >= 2:
+                        out.append(dict(pts=line, cls="sidewalk", bridge=False,
+                                        steps=False, w=2.1, conn=None, name=s.get("name")))
+                        kept += 1
+                    line = []
+                    continue
+                line.append((px, pz))
+            if len(line) >= 2:
+                out.append(dict(pts=line, cls="sidewalk", bridge=False, steps=False,
+                                w=2.1, conn=None, name=s.get("name")))
+                kept += 1
+    print(f"  pavements: {kept} generated where none is mapped")
+    return out
+
+
 def bake_roads(g):
     t = load("transportation-segment")
     geoms = project(t["geometry"].to_pylist())
@@ -519,6 +626,7 @@ def bake_roads(g):
                          w=road_width(widths[k], cname), conn=conns[k],
                          name=(names[k] or {}).get("primary") if names[k] else None))
 
+    segs += make_pavements(segs)
     deck, deck_at = solve_bridge_decks(segs, g)
     nbr_count = sum(1 for s in segs if s["bridge"])
     print(f"  bridges: {nbr_count} segments, {len(deck)} deck nodes solved")
@@ -711,6 +819,111 @@ def emit_area(out, g, poly, ci, flat):
                 cls=ci,
                 verts=[(v[0] - ox, v[1] - oz, y) for v, y in zip(verts, ys)],
                 idx=idx))
+
+
+# --------------------------------------------------------------------------
+# 4b. businesses
+# --------------------------------------------------------------------------
+def bake_shops(g, places, footprints, fgeo, centrelines):
+    """Put every business on the wall it actually trades from.
+
+    A place is a POINT -- usually somewhere inside the building, sometimes in
+    the middle of its block -- and a sign has to be on a WALL FACING THE STREET.
+
+    THE NEAREST WALL IS NOT THE STREET WALL, and taking it put 14% of Portland's
+    shopfronts facing into their own building or into the neighbour they share a
+    party wall with. Downtown blocks are built wall to wall: step a metre out of
+    the back of a building and you are inside the next one. So every edge of the
+    footprint is a CANDIDATE, and the one that wins is the one whose outward
+    step lands in the open AND lands near a road -- which is the definition of a
+    shopfront rather than a description of one.
+
+    TWO SIGNS ON TOP OF EACH OTHER IS WORSE THAN ONE SIGN MISSING. A twelve-
+    tenant building has twelve places inside it, all wanting the same frontage,
+    so the facade is claimed at `SPACING` metres and the first to ask gets it.
+    Sorted by confidence, so what survives is what Overture is surest about.
+    """
+    SPACING = 7.0
+    REACH = 45.0
+    OUT = 1.6
+    roads = shapely.STRtree([
+        LineString([(p[0], p[1]) for p in s["pts3"]])
+        for s in centrelines
+        if len(s["pts3"]) > 1 and s["cls"] not in ("rail",)])
+    claimed = Hash2D(8.0)
+    out = defaultdict(list)
+    placed = far_from_any = no_face = 0
+    for cat, name, conf, x, z in places:
+        pt = shapely.points(x, z)
+        near = [hi for hi in footprints.query(pt.buffer(REACH))]
+        if not near:
+            far_from_any += 1
+            continue
+        near.sort(key=lambda hi: fgeo[hi].distance(pt) if fgeo[hi] is not None else 1e9)
+        best = None
+        for hi in near[:4]:                      # the four closest buildings
+            poly = fgeo[hi]
+            if poly is None or poly.is_empty:
+                continue
+            base = poly.distance(pt)
+            if base > 30:
+                break
+            ring = list((poly.exterior if poly.geom_type == "Polygon" else
+                         list(poly.geoms)[0].exterior).coords)[:-1]
+            ring = ring_ccw_from_above(ring)
+            for i in range(len(ring)):
+                ax, az = ring[i]
+                bx, bz = ring[(i + 1) % len(ring)]
+                ex, ez = bx - ax, bz - az
+                L = math.hypot(ex, ez)
+                if L < 3.0:
+                    continue
+                t = max(0.0, min(1.0, ((x - ax) * ex + (z - az) * ez) / (L * L)))
+                qx, qz = ax + ex * t, az + ez * t
+                # Anticlockwise from above, the outward normal of a->b is
+                # (-ez, ex) normalised -- derived once in the wall builder and
+                # the same fact here.
+                nx, nz = -ez / L, ex / L
+                ox_, oz_ = qx + nx * OUT, qz + nz * OUT
+                probe = shapely.points(ox_, oz_)
+                if any(fgeo[k] is not None and fgeo[k].contains(probe)
+                       for k in footprints.query(probe)):
+                    continue                      # that wall is a party wall
+                rd = roads.query_nearest(probe)
+                droad = 1e9
+                if len(rd):
+                    droad = float(shapely.distance(probe, roads.geometries.take(rd[:1])[0]))
+                score = math.hypot(x - qx, z - qz) * 0.6 + droad
+                if best is None or score < best[0]:
+                    best = (score, (qx, qz), (nx, nz), L)
+        if best is None:
+            no_face += 1
+            continue
+        _, bp, bn, blen = best
+        if claimed.near(bp[0], bp[1], SPACING):
+            continue
+        claimed.add(bp[0], bp[1])
+        if not inside(bp[0], bp[1]):
+            continue
+        px, pz = bp[0] + bn[0] * 0.12, bp[1] + bn[1] * 0.12
+        y = float(g.at(np.array([px]), np.array([pz]))[0])
+        cname = C.SHOP[cat]
+        awning = cname in ("food", "cafe", "bar", "shop", "grocery", "pharmacy")
+        landmark = cname == "landmark"
+        i, j = chunk_of(px, pz)
+        ox, oz = W + i * CH, N + j * CH
+        out[(i, j)].append(dict(
+            cat=cat, flags=(1 if awning else 0) | (2 if landmark else 0),
+            yaw=math.atan2(bn[0], -bn[1]),           # bearing of the outward normal
+            w=min(blen - 0.6, max(2.2, len(name) * 0.30 + 1.0)),
+            x=px - ox, z=pz - oz, y=y,
+            h=3.55 if not landmark else 4.2, name=name[:48]))
+        placed += 1
+    lost = len(places) - placed - far_from_any - no_face
+    print(f"  shops: {placed} on street-facing walls ({far_from_any} had no building "
+          f"within {REACH:.0f} m, {no_face} had no wall facing anything, "
+          f"{lost} lost the frontage to a neighbour)")
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -962,6 +1175,27 @@ def pack_areas(items):
     return b
 
 
+def pack_shops(items):
+    """SHOP plus the NAME table it indexes into."""
+    b = bytearray()
+    names, idx = [], {}
+    for it in items:
+        nm = it["name"]
+        if nm not in idx:
+            idx[nm] = len(names)
+            names.append(nm)
+        b += struct.pack("<BBBB", it["cat"], it["flags"],
+                         int(it["yaw"] / (2*math.pi) % 1.0 * 256) & 255,
+                         max(4, min(255, int(round(it["w"] * 4)))))
+        b += struct.pack("<hhhh", dm(it["x"]), dm(it["z"]), dm(it["y"]), dm(it["h"]))
+        b += struct.pack("<H", idx[nm])
+    nb = bytearray()
+    for nm in names:
+        e = nm.encode("utf-8")[:255]
+        nb += struct.pack("<B", len(e)) + e
+    return bytes(b), bytes(nb), len(names)
+
+
 def pack_props(items):
     b = bytearray()
     for kind, x, z, y, yaw, scale, tint in items:
@@ -1011,7 +1245,7 @@ def bake_places(centrelines, landmarks):
     return out
 
 
-def write_all(g, bld, roads, areas, props, far, landmarks, places):
+def write_all(g, bld, roads, areas, props, shops, far, landmarks, places, river):
     os.makedirs(OUT, exist_ok=True)
     for f in glob.glob(os.path.join(OUT, "*.bin")):
         os.remove(f)
@@ -1028,12 +1262,22 @@ def write_all(g, bld, roads, areas, props, far, landmarks, places):
             w.add("ROAD", len(R), pack_roads(R))
             w.add("AREA", len(A), pack_areas(A))
             w.add("PROP", len(P), pack_props(P))
+            # NOT `S`. That is the module-level SOUTH edge of the world, and
+            # shadowing it here wrote the last chunk's shop list into
+            # `manifest.world.south` -- so the map overlay's player dot came out
+            # at NaN and nothing said why. A one-letter name in a long function
+            # is how a constant gets quietly replaced by a list of cafes.
+            SH = shops.get((i, j), [])
+            if SH:
+                sb, nb, nn = pack_shops(SH)
+                w.add("SHOP", len(SH), sb)
+                w.add("NAME", nn, nb)
             data = w.bytes()
             name = f"c{i}_{j}.bin"
             open(os.path.join(OUT, name), "wb").write(data)
             total += len(data)
             chunks.append(dict(i=i, j=j, bytes=len(data), b=len(B), r=len(R),
-                               a=len(A), p=len(P)))
+                               a=len(A), p=len(P), s=len(SH)))
 
     fb = bytearray(b"PDXF" + struct.pack("<I", len(far)))
     for cx, cz, base, top, rx, rz, ci in far:
@@ -1050,10 +1294,16 @@ def write_all(g, bld, roads, areas, props, far, landmarks, places):
                    terrainCell=CELL, waterLevel=WATER),
         spawn=dict(x=round(spawn_x, 1), z=round(spawn_z, 1),
                    y=round(float(g.at(np.array([spawn_x]), np.array([spawn_z]))[0]), 2)),
-        classes=dict(building=C.BUILDING, road=C.ROAD, area=C.AREA, prop=C.PROP),
+        classes=dict(building=C.BUILDING, road=C.ROAD, area=C.AREA, prop=C.PROP,
+                     shop=C.SHOP),
         roadWidth=C.ROAD_WIDTH,
         chunks=chunks,
         far=dict(count=len(far), bytes=len(fb)),
+        # Where the ambient life runs. The river is measured off the water
+        # polygon here rather than guessed at in the runtime, because the
+        # runtime only ever has the chunks around the player loaded and a boat
+        # has to be able to come from somewhere he has not walked to yet.
+        routes=dict(river=river),
         source=dict(
             overture=CITY["release"],
             terrain="AWS elevation-tiles-prod (Terrarium, USGS 3DEP over the US)",
@@ -1112,6 +1362,26 @@ def main():
              if p is not None and p.geom_type in ("Polygon", "MultiPolygon")]
     areas = bake_areas(g, [p for p, _ in wpair], [c for _, c in wpair], land_rows, use_rows)
 
+    print(" businesses")
+    pt = load("places-place")
+    pgeo = project(pt["geometry"].to_pylist())
+    pcats = pt["categories"].to_pylist()
+    pnames = pt["names"].to_pylist()
+    pconf = pt["confidence"].to_pylist()
+    rows = []
+    for geom, cat, nm, cf in zip(pgeo, pcats, pnames, pconf):
+        if geom is None or geom.geom_type != "Point" or not cf or cf < 0.55:
+            continue
+        name = (nm or {}).get("primary")
+        if not name:
+            continue
+        k = C.shop_class((cat or {}).get("primary"), (cat or {}).get("alternate"))
+        if k is None or not inside(geom.x, geom.y, 60):
+            continue
+        rows.append((k, name, float(cf), geom.x, geom.y))
+    rows.sort(key=lambda r: -r[2])
+    shops = bake_shops(g, rows, ftree, list(fgeo), centrelines)
+
     print(" street furniture")
     it = load("base-infrastructure")
     igeo = project(it["geometry"].to_pylist())
@@ -1122,9 +1392,12 @@ def main():
     print(" places")
     landmarks = bridges + landmarks
     places = bake_places(centrelines, landmarks)
+    river = river_route(wpolys)
+    print(f"  river centreline {len(river)} points"
+          + (f", {min(r[2] for r in river)*2:.0f}..{max(r[2] for r in river)*2:.0f} m wide" if river else ""))
 
     print(" writing")
-    write_all(g, bld, roads, areas, props, far, landmarks, places)
+    write_all(g, bld, roads, areas, props, shops, far, landmarks, places, river)
 
     # The map the MAP key shows is drawn from the BAKED chunks, not from the
     # source tables: it is wrong if the writer is wrong, if the reader is wrong,

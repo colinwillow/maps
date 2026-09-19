@@ -15,6 +15,9 @@ import { Camera } from './camera.js';
 import { loadColin, animate } from './character.js';
 import { makeSky } from './sky.js';
 import { Overrides } from './overrides.js';
+import { SignText } from './shops.js';
+import { Crowd } from './crowd.js';
+import { Ambient } from './ambient.js';
 import { CAM, MOVE, SKY, STREAM } from './tune.js';
 
 const BUILD = 'p1';
@@ -59,6 +62,7 @@ addEventListener('resize', resize);
 resize();
 
 let world, ground, player, camera, colin, sticks, manifest, places = null, ov = null;
+let signs = null, crowd = null, ambient = null;
 let running = false, last = 0, fps = 0, frames = 0, fpsT = 0, hudT = 0;
 let dbg = 0;
 
@@ -76,8 +80,14 @@ let dbg = 0;
     camera.az = 1.34;                        // opening shot looks toward downtown
     camera.lx = player.x; camera.ly = player.y + CAM.height; camera.lz = player.z;
 
+    signs = new SignText(scene);
+    crowd = new Crowd(scene, THREE);
+
     boot('the skyline', 0.1);
     const nfar = await world.loadFar();
+    // After the skyline, because the helicopter orbits where the skyline SAYS
+    // downtown is -- built before it, and it would circle the world origin.
+    ambient = new Ambient(scene, THREE, manifest, world);
 
     boot('the streets', 0.2);
     // Build the spawn's neighbourhood before anything else, synchronously
@@ -143,15 +153,24 @@ function frame(now) {
   if (dt > 0.1) dt = 0.1;
   if (dt <= 0) return;
 
-  const mv = sticks.move(), lk = sticks.look();
+  let mv = sticks.move();
+  const lk = sticks.look();
+  // A scripted walk, for tools/pdx/shot.mjs. It drives the SAME stick the thumb
+  // drives -- a harness that pokes the player's position directly is measuring
+  // a game that does not exist.
+  const w = window.pdx && window.pdx.__walk;
+  if (w && w.t > 0) { w.t -= dt; mv = { x: w.x, y: w.y, mag: 1, run: false }; }
   camera.step(dt, player, lk, ground);
   player.step(dt, ground, mv, camera.az, sticks.jump());
   world.update(player.x, player.z);
+  if (signs) signs.update(dt, player.x, player.z, world.loaded(), manifest.classes.shop);
+  if (crowd) crowd.step(dt, player.x, player.z, world.loaded(), manifest.classes.road);
+  if (ambient) ambient.step(dt, player.x, player.y, player.z, world.loaded(), manifest.classes.road);
 
   if (colin) {
     colin.root.position.set(player.x, player.y, player.z);
     colin.root.rotation.y = -player.facing;
-    animate(colin, dt, player.speed, player.grounded);
+    animate(colin, dt, player.speed, player.grounded, player.vy);
   }
 
   renderer.render(scene, cam);
@@ -169,6 +188,8 @@ function hud() {
     `<b>${BUILD}</b> · ${fps.toFixed(0)} fps · ${info.calls} dc · ` +
     `${(info.triangles / 1000).toFixed(0)}k tri · ${s.live} chunks` +
     (s.fetching ? ` · loading ${s.fetching}` : '') +
+    (crowd && crowd.live ? ` · ${crowd.people.filter((p) => p.live).length} people` : '') +
+    (ambient && ambient.live ? ` · ${ambient.cars.filter((c) => c.live).length} cars` : '') +
     (dbg ? `<br>x ${player.x.toFixed(0)} z ${player.z.toFixed(0)} y ${player.y.toFixed(1)}` +
            ` · ${ground.terrainAt(player.x, player.z).toFixed(1)}m ground` +
            (player.swimming ? ' · SWIMMING' : '') +
@@ -222,8 +243,25 @@ q('mapWrap').onclick = () => { q('mapWrap').classList.remove('on'); q('mapHint')
 // The console handle, the same shape every other game in this account has.
 window.pdx = { get player() { return player; }, get world() { return world; },
                get ground() { return ground; }, get camera() { return camera; },
+               get ambient() { return ambient; },
                THREE, scene, renderer,
-               go(x, z) { player.x = x; player.z = z; player.y = ground.terrainAt(x, z) + 1; },
+               // Teleporting has to land you OUTSIDE. Dropped straight onto a
+               // coordinate you are as likely as not inside a building, and a
+               // camera inside a building is a black screen that looks exactly
+               // like a broken renderer.
+               go(x, z) {
+                 player.y = ground.terrainAt(x, z) + 1;
+                 for (let i = 0; i < 12; i++) {
+                   const r = ground.resolve(x, z, player.y, MOVE.radius + 0.35);
+                   x = r[0]; z = r[1];
+                   if (!r[2]) break;
+                   player.y = ground.terrainAt(x, z) + 1;
+                 }
+                 player.x = x; player.z = z;
+                 player.y = ground.groundAt(x, z, player.y + 2) + 0.05;
+                 player.vx = player.vz = player.vy = 0;
+                 camera.lx = x; camera.ly = player.y + CAM.height; camera.lz = z;
+               },
                ghost(on = true, y) { player.ghost = on; if (y !== undefined) player.y = y; },
                get landmarks() { return ov.landmarks; },
                /**

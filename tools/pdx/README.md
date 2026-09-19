@@ -45,11 +45,14 @@ fetch_city.py   Overture S3  ->  tools/pdx/.cache/*.parquet
 bake.py
   1  terrain    Terrarium z15 -> one city-wide grid at 10 m, water CARVED into it
   2  buildings  footprints -> rings + heights + a ridge segment, per chunk
-  3  roads      centrelines -> resampled, draped, bridges SOLVED, split per chunk
+  3  roads      centrelines -> PAVEMENTS GENERATED, resampled, draped,
+                bridges SOLVED, split per chunk
   4  areas      land cover -> clipped, cut on a 25 m lattice, draped
-  5  props      real furniture + generated trees, lamps and parked cars
-  6  places     named streets sampled every 70 m, for the "where am I" readout
-  7  write      100 chunk files, far.bin, manifest.json, landmarks.json, map.png
+  5  shops      places -> scored against every wall of the 4 nearest buildings
+  6  props      real furniture + generated trees, lamps and parked cars
+  7  places     named streets sampled every 70 m, for the "where am I" readout
+     river      a centreline scanned down the Willamette, for the boats
+  8  write      100 chunk files, far.bin, manifest.json, landmarks.json, map.png
 ```
 
 **The terrain grid is built and carved BEFORE anything else reads it**, because
@@ -66,10 +69,12 @@ a metre under the hillside.
 ```
 public/pdx/data/
   manifest.json    anchor, world box, chunk grid, class vocabularies, attribution
+                   plus `routes.river`: [x, z, halfWidth] every 40 m down the
+                   Willamette, which is where the boats in ambient.js live
   c<i>_<j>.bin     100 chunks, 500 m square, mean 51 kB   (format: chunkfmt.py)
   far.bin          544 skyline boxes, 7 kB, one draw call
   landmarks.json   424 named things + a ready-made clear box per bridge
-  places.json      6,495 points over 492 named streets
+  places.json      6,549 points over 492 named streets
   map.png          the whole city drawn from the BAKED chunks
 ```
 
@@ -79,6 +84,28 @@ wrong, or if the winding is inside out, and one glance tells all three apart
 from the correct answer.
 
 ## Things that cost a build
+
+* **`S` IS THE WORLD'S SOUTH EDGE, AND A LOOP VARIABLE TOOK IT.** `write_all`
+  used `S` for a chunk's shop list, so `manifest.world.south` came out as a
+  list of cafes -- the map overlay's player dot went to NaN and nothing said
+  why. Caught by a test that asked whether the river route reached the south
+  edge, which is the only reason anybody looked. A one-letter name in a long
+  function is how a constant gets quietly replaced by something else entirely.
+
+* **"THE BIGGEST WATER POLYGON" IS THE COLUMBIA, NOT THE WILLAMETTE.** It is
+  four times the area and lies entirely NORTH of the play area, so
+  `river_route()` picking by area scanned somewhere the city is not and came
+  back with zero points -- a feature that silently does nothing rather than an
+  error. The union is clipped to the play box first and the widest run in each
+  east-west cut wins, which cannot pick a river that is not here.
+
+* **OSM ONLY MAPS SIDEWALKS WHERE SOMEBODY BOTHERED.** Downtown and a few main
+  streets have separate sidewalk ways; SE Hawthorne has none, so it baked as a
+  road with lawn either side and the crowd -- which walks the pavement network
+  -- had three people on it. `make_pavements()` offsets every street in
+  `classes.PAVED` by `w/2 + 1.15` on both sides and suppresses the run wherever
+  a mapped pavement is already within 4 m. 9,265 generated, and it is the whole
+  difference between a street and a road.
 
 * **`glob("base-land_*")` ALSO MATCHES `base-land_use_*`.** The land-use table
   got baked as land cover, 2,985 mapped street trees silently became zero, and
@@ -137,17 +164,27 @@ from the correct answer.
 `city.py` is the whole configuration. The anchor is the west end of the Burnside
 Bridge; `half` is 2500 m, so the play area is 5 km square in 100 chunks of 500 m.
 
-Changing `anchor` and re-running both scripts bakes somewhere else. Nothing in
-`bake.py` is Portland-specific except `water_level` (the Willamette's surface,
-3 m) and the spawn. The bbox index is cached per Overture release, so the second
-city in the same release costs only its own row groups.
+Changing `anchor` and re-running both scripts bakes somewhere else. Three things
+in `bake.py` are Portland-specific and would need looking at: `water_level` (the
+Willamette's surface, 3 m), the spawn, and **`river_route()`'s scanline**, which
+cuts east-west and takes the widest run. That is exactly right for a river
+running roughly north-south through the bbox and wrong for one running the other
+way -- and it says so loudly rather than quietly, because the route comes out as
+a handful of disconnected rows instead of one long chain, and the count is
+printed. A city with no river simply gets no boats.
+
+The bbox index is cached per Overture release, so the second city in the same
+release costs only its own row groups.
 
 ## Tools
 
 ```sh
 python3 tools/pdx/preview.py 1600 /tmp/pdx.png   # draw the baked city from above
-node    tools/pdx/shot.mjs --settle 8 --out /tmp/a.png
-node    tools/pdx/shot.mjs --at 45.5231,-122.6690 --up 40 --az 1.2 --pitch 0.3
+# and the browser harness, which proves the module evaluates and the winding is
+# not inside out -- `--js` runs an expression against `window.pdx` before the
+# shot, for the parts that are on a timer (an airliner is every half minute)
+node tools/pdx/shot.mjs --at 45.5231,-122.67 --az 1.3 --settle 8 --out /tmp/a.png
+node tools/pdx/shot.mjs --js "window.pdx.ambient.planeT = 0" --out /tmp/b.png
 ```
 
 `shot.mjs` boots the real page in a real Chromium against a real static server,

@@ -7,12 +7,16 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseChunk } from '../public/pdx/game/chunk.js';
-import { buildTerrain, buildBuildings, buildRoads, buildAreas } from '../public/pdx/game/build.js';
+import * as THREE from 'three';
+import { buildTerrain, buildBuildings, buildRoads, buildAreas, Soup } from '../public/pdx/game/build.js';
+import { Crowd, Pavements, figure } from '../public/pdx/game/crowd.js';
+import { buildShops } from '../public/pdx/game/shops.js';
+import { Ambient, car, boat, plane, heli, prism, closed } from '../public/pdx/game/ambient.js';
 import { buildProps } from '../public/pdx/game/props.js';
 import { Ground } from '../public/pdx/game/ground.js';
 import { Overrides } from '../public/pdx/game/overrides.js';
 import { Player } from '../public/pdx/game/player.js';
-import { MOVE } from '../public/pdx/game/tune.js';
+import { MOVE, AIR } from '../public/pdx/game/tune.js';
 
 const DATA = path.resolve('public/pdx/data');
 const M = JSON.parse(fs.readFileSync(path.join(DATA, 'manifest.json'), 'utf8'));
@@ -359,5 +363,354 @@ describe('landmark overrides', () => {
     const cut = ov.filter(raw, W.west + ci * W.chunk, W.north + cj * W.chunk, W.chunk);
     expect(cut.road.length).toBe(raw.road.length);
     expect(cut.bldg.length).toBeLessThanOrEqual(raw.bldg.length);
+  });
+});
+
+describe('the crowd', () => {
+  // A crowd that walks through walls and down the middle of Burnside is worse
+  // than no crowd, so these check WHERE they are, not that they exist.
+  const g = new Ground(M);
+  const live = [];
+  const [ci, cj] = chunkOf(M.spawn.x, M.spawn.z);
+  for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+    const i = ci + di, j = cj + dj;
+    const raw = read(i, j);
+    g.addChunk(i, j, raw, NAMES);
+    live.push({ raw, ox: W.west + i * W.chunk, oz: W.north + j * W.chunk });
+  }
+
+  it('finds a pavement network in the real city', () => {
+    const p = new Pavements();
+    const n = p.rebuild(live, NAMES.road);
+    expect(n, 'no pavement anywhere near the spawn').toBeGreaterThan(200);
+    // Every segment must be walkable-length and have a real direction.
+    for (const s of p.seg) {
+      expect(s.L).toBeGreaterThan(1);
+      expect(Number.isFinite(s.ay) && Number.isFinite(s.by)).toBe(true);
+    }
+  });
+
+  it('walks people along it, and keeps them ON it', () => {
+    const crowd = new Crowd({ add() {} }, THREE);
+    const moved = new Map();
+    for (let k = 0; k < 400; k++) {
+      crowd.step(1 / 30, M.spawn.x, M.spawn.z, live, NAMES.road);
+      for (const p of crowd.people) if (p.live) {
+        const was = moved.get(p);
+        if (was) moved.set(p, was + Math.hypot(p.x - was.x, p.z - was.z) || was);
+        else moved.set(p, { x: p.x, z: p.z, d: 0 });
+      }
+    }
+    const walking = crowd.people.filter((p) => p.live);
+    expect(walking.length, 'nobody spawned').toBeGreaterThan(8);
+
+    const pav = crowd.pav;
+    let onPath = 0;
+    for (const p of walking) {
+      // Nearest point on any pavement segment. Anyone further off than half a
+      // pavement plus a body is not on the pavement.
+      let best = 1e9;
+      for (const s of pav.seg) {
+        const ex = s.bx - s.ax, ez = s.bz - s.az;
+        const L2 = ex * ex + ez * ez || 1;
+        let t = ((p.x - s.ax) * ex + (p.z - s.az) * ez) / L2;
+        t = t < 0 ? 0 : t > 1 ? 1 : t;
+        best = Math.min(best, Math.hypot(p.x - (s.ax + ex * t), p.z - (s.az + ez * t)));
+      }
+      if (best < 1.2) onPath++;
+    }
+    expect(onPath, `${walking.length - onPath} of ${walking.length} walked off the pavement`)
+      .toBe(walking.length);
+  });
+
+  it('does not put anybody inside a building', () => {
+    const crowd = new Crowd({ add() {} }, THREE);
+    for (let k = 0; k < 300; k++) crowd.step(1 / 30, M.spawn.x, M.spawn.z, live, NAMES.road);
+    let inside = 0;
+    for (const p of crowd.people) {
+      if (!p.live) continue;
+      if (g.resolve(p.x, p.z, p.y + 0.9, 0.05)[2]) inside++;
+    }
+    // Not zero: OSM footways legitimately run through arcades and under
+    // overhangs, and a building footprint is its outline at the ground. A
+    // handful is the data; a quarter of the crowd would be the walker.
+    expect(inside / Math.max(1, crowd.people.filter((p) => p.live).length))
+      .toBeLessThan(0.15);
+  });
+
+  it('gives every walker a body that is the right way out and the right size', () => {
+    const crowd = new Crowd({ add() {} }, THREE);
+    for (let seed = 1; seed <= 40; seed++) {
+      const p = crowd.spawn(seed, seed);
+      p.live = true; p.x = 0; p.y = 0; p.z = 0; p.yaw = 0.3; p.phase = seed * 0.7;
+      const s = new Soup(64);
+      figure(s, p, 5);
+      const gg = s.done();
+      let v = 0, lo = 1e9, hi = -1e9, wlo = 1e9, whi = -1e9;
+      for (let t = 0; t < gg.tris; t++) {
+        const i = t * 9, P = gg.position;
+        v += (P[i]   * (P[i+4]*P[i+8] - P[i+5]*P[i+7])
+            + P[i+1] * (P[i+5]*P[i+6] - P[i+3]*P[i+8])
+            + P[i+2] * (P[i+3]*P[i+7] - P[i+4]*P[i+6])) / 6;
+        for (let k = 0; k < 9; k += 3) {
+          lo = Math.min(lo, P[i+k+1]); hi = Math.max(hi, P[i+k+1]);
+          wlo = Math.min(wlo, P[i+k]); whi = Math.max(whi, P[i+k]);
+        }
+      }
+      expect(v, `walker ${seed} is inside out`).toBeGreaterThan(0);
+      expect(lo, `walker ${seed} has a foot under the pavement`).toBeGreaterThan(-0.05);
+      expect(hi, `walker ${seed} is ${hi.toFixed(2)} m tall`).toBeLessThan(2.4);
+      expect(hi).toBeGreaterThan(1.4);
+      // A person is about 0.5 m across, and an umbrella or a dog widens the
+      // record rather than the body. Two metres means the proportions are gone.
+      expect(whi - wlo, `walker ${seed} is ${(whi-wlo).toFixed(2)} m wide`).toBeLessThan(2.0);
+    }
+  });
+
+  it('is deterministic: the same seat is the same person', () => {
+    const a = new Crowd({ add() {} }, THREE);
+    const b = new Crowd({ add() {} }, THREE);
+    for (let i = 0; i < 12; i++) {
+      const x = a.spawn(i, i + 1), y = b.spawn(i, i + 1);
+      expect(x.height).toBe(y.height);
+      expect(x.top).toEqual(y.top);
+      expect(x.speed).toBe(y.speed);
+    }
+  });
+});
+
+describe('shopfronts', () => {
+  it('sit on a wall, facing out of it', () => {
+    // A sign whose outward normal points INTO the building is a sign on the
+    // inside of the shop, and from the street it is simply not there.
+    let checked = 0;
+    const wrong = [];
+    for (let j = 0; j < W.n; j += 2) for (let i = 0; i < W.n; i += 2) {
+      const c = read(i, j);
+      if (!c.shop.length) continue;
+      for (const sh of c.shop) {
+        const fx = Math.sin(sh.yaw), fz = -Math.cos(sh.yaw);
+        // Step a metre and a half out along the facing; that must leave the
+        // building, and stepping back in must enter one.
+        const out = nearestBuilding(c, sh.x + fx * 1.4, sh.z + fz * 1.4);
+        const inn = nearestBuilding(c, sh.x - fx * 0.9, sh.z - fz * 0.9);
+        if (!inn) continue;
+        checked++;
+        if (out) wrong.push(sh.name);
+      }
+    }
+    expect(checked, 'no shopfront could be tested against its wall').toBeGreaterThan(500);
+    // Not zero, and stated rather than hidden: a hospital campus or a school
+    // has courtyards with buildings on every side, and a chunk's footprint list
+    // stops at the chunk edge, so a wall facing the next block over reads as
+    // facing a building. A few per cent is the city; fourteen was taking the
+    // NEAREST wall instead of the one that faces a road.
+    expect(wrong.length / checked,
+           `${wrong.length}/${checked} face into a building: ${wrong.slice(0, 4).join(', ')}`)
+      .toBeLessThan(0.05);
+  });
+
+  it('carries real business names', () => {
+    const names = new Set();
+    for (let j = 0; j < W.n; j++) for (let i = 0; i < W.n; i++)
+      for (const sh of read(i, j).shop) names.add(sh.name);
+    expect(names.size).toBeGreaterThan(2000);
+    for (const n of names) expect(n.length).toBeGreaterThan(0);
+  });
+
+  it('builds geometry that faces the street', () => {
+    let boards = 0;
+    for (let j = 0; j < W.n && boards < 200; j += 3) for (let i = 0; i < W.n; i += 3) {
+      const c = read(i, j);
+      if (!c.shop.length) continue;
+      const gg = buildShops(c.shop.slice(0, 20), NAMES.shop);
+      expect(gg.tris).toBeGreaterThan(0);
+      boards += gg.tris;
+    }
+    expect(boards).toBeGreaterThan(100);
+  });
+});
+
+function nearestBuilding(c, x, z) {
+  for (const b of c.bldg) {
+    let inside = false;
+    for (let i = 0, j = b.nv - 1; i < b.nv; j = i++) {
+      const xi = b.ring[i*2], zi = b.ring[i*2+1], xj = b.ring[j*2], zj = b.ring[j*2+1];
+      if ((zi > z) !== (zj > z) && x < (xj - xi) * (z - zi) / (zj - zi) + xi) inside = !inside;
+    }
+    if (inside) return true;
+  }
+  return false;
+}
+
+describe('ambient life', () => {
+  // A plane, boats and traffic are the cheapest thing in the game and the
+  // easiest to get subtly wrong: a car on the wrong side of the road, a boat
+  // on dry land, a hull lit from inside. None of those change a triangle
+  // count, so every check here pins a POSITION or a DIRECTION.
+  const live = [];
+  const [ci, cj] = chunkOf(M.spawn.x, M.spawn.z);
+  for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+    const i = ci + di, j = cj + dj;
+    live.push({ raw: read(i, j), ox: W.west + i * W.chunk, oz: W.north + j * W.chunk });
+  }
+  const stubScene = { add() {} };
+
+  it('the bake found a river, and it runs the length of the city', () => {
+    const r = M.routes && M.routes.river;
+    expect(r, 'no river route in the manifest -- boats have nowhere to be').toBeTruthy();
+    expect(r.length).toBeGreaterThan(40);
+    // NORTH TO SOUTH, which is the direction the Willamette runs here, and the
+    // check that would fail if river_route() ever picked up the Columbia --
+    // four times the area and entirely north of the play area. It did, once.
+    expect(r[0][1]).toBeLessThan(W.north + 300);
+    expect(r[r.length - 1][1]).toBeGreaterThan(W.south - 300);
+    for (const p of r) {
+      expect(p[0]).toBeGreaterThan(W.west);
+      expect(p[0]).toBeLessThan(W.east);
+      expect(p[2], 'a 60 m "river" is a slough').toBeGreaterThan(30);
+    }
+    // Downtown is WEST of the river and Ladd's Addition is EAST of it. The
+    // route has to agree with that or it is not the Willamette.
+    const mid = r[(r.length / 2) | 0];
+    expect(Math.abs(mid[0]), 'the river should pass near the anchor').toBeLessThan(900);
+  });
+
+  it('boats float on the river, not on the land beside it', () => {
+    const a = new Ambient(stubScene, THREE, M, { skyline: { x: 0, z: 0 } });
+    expect(a.boats.length, 'no boats').toBeGreaterThan(2);
+    const R = M.routes.river;
+    for (let k = 0; k < 900; k++) a.step(1 / 20, M.spawn.x, 3, M.spawn.z, live, NAMES.road);
+    for (const b of a.boats) {
+      expect(b.y).toBeCloseTo(W.waterLevel, 3);
+      // Nearest point on the centreline, which must be inside the half width
+      // the bake measured for that stretch.
+      let best = 1e9, hw = 0;
+      for (let i = 0; i < R.length - 1; i++) {
+        const ax = R[i][0], az = R[i][1], ex = R[i+1][0] - ax, ez = R[i+1][1] - az;
+        const L2 = ex * ex + ez * ez || 1;
+        let t = ((b.x - ax) * ex + (b.z - az) * ez) / L2;
+        t = t < 0 ? 0 : t > 1 ? 1 : t;
+        const d = Math.hypot(b.x - (ax + ex * t), b.z - (az + ez * t));
+        if (d < best) { best = d; hw = R[i][2]; }
+      }
+      expect(best, 'a boat left the channel').toBeLessThan(hw);
+    }
+  });
+
+  it('cars drive on the RIGHT, which is the whole feature', () => {
+    // Offset to the wrong side is a head-on collision with every other car on
+    // the street, and it reads instantly on a phone and not at all in a count.
+    const a = new Ambient(stubScene, THREE, M, { skyline: { x: 0, z: 0 } });
+    for (let k = 0; k < 200; k++) a.step(1 / 20, M.spawn.x, 3, M.spawn.z, live, NAMES.road);
+    const driving = a.cars.filter((c) => c.live);
+    expect(driving.length, 'no traffic anywhere near the spawn').toBeGreaterThan(4);
+    const segs = a.lanes.seg;
+    for (const c of driving) {
+      const s = segs[c.si];
+      const ux = (s.bx - s.ax) / s.L * c.dir, uz = (s.bz - s.az) / s.L * c.dir;
+      // Which side of the centreline he is on, measured along his own RIGHT.
+      // Right of a heading (ux, uz) is (-uz, ux) with +X east and +Z south.
+      let t = ((c.x - s.ax) * (s.bx - s.ax) + (c.z - s.az) * (s.bz - s.az)) / (s.L * s.L);
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+      const dx = c.x - (s.ax + (s.bx - s.ax) * t), dz = c.z - (s.az + (s.bz - s.az) * t);
+      expect(dx * -uz + dz * ux, 'a car on the wrong side of the road')
+        .toBeGreaterThan(0.2);
+      // And his yaw has to agree with where he is going, or he drives sideways.
+      expect(Math.sin(c.yaw) * ux + -Math.cos(c.yaw) * uz).toBeGreaterThan(0.99);
+    }
+  });
+
+  it('a car points its NOSE the way it is travelling', () => {
+    // A box is symmetric, so nothing about the geometry says which end is
+    // front -- except the headlamps, which are the one asymmetry in it. They
+    // must be forward of the tail lamps along the direction of travel.
+    const s = new Soup(256);
+    const c = { x: 0, y: 0, z: 0, yaw: 0.9, len: 4.3, wide: 1.8, tall: 1.44,
+                big: false, col: [200, 200, 200] };
+    car(s, c);
+    const g = s.done();
+    const fx = Math.sin(c.yaw), fz = -Math.cos(c.yaw);
+    let head = -1e9, tail = 1e9;
+    for (let v = 0; v < g.tris * 3; v++) {
+      const i = v * 3, along = g.position[i] * fx + g.position[i+2] * fz;
+      const r = g.color[i], gr = g.color[i+1], b = g.color[i+2];
+      if (r > 240 && gr > 230 && b > 190) head = Math.max(head, along);   // headlamp
+      if (r > 150 && r < 190 && gr < 60 && b < 60) tail = Math.min(tail, along);
+    }
+    expect(head, 'no headlamps on the car').toBeGreaterThan(0);
+    expect(head, 'the car is driving backwards').toBeGreaterThan(tail);
+  });
+
+  it('every ambient body encloses a POSITIVE volume', () => {
+    // The divergence theorem again, for the same reason it is on the props:
+    // a hull wound inside out still renders, and what it costs is the
+    // lighting. A boat is seen at four hundred metres and a plane from
+    // directly underneath, so neither gets to skip a face either.
+    const vol = (g) => {
+      let v = 0;
+      for (let t = 0; t < g.tris; t++) {
+        const i = t * 9, P = g.position;
+        v += (P[i]   * (P[i+4]*P[i+8] - P[i+5]*P[i+7])
+            + P[i+1] * (P[i+5]*P[i+6] - P[i+3]*P[i+8])
+            + P[i+2] * (P[i+3]*P[i+7] - P[i+4]*P[i+6])) / 6;
+      }
+      return v;
+    };
+    for (const yaw of [0, 0.7, 2.4, -1.9]) {
+      let s = new Soup(64);
+      prism(s, [3, 4, 5], 1, 2, 3, yaw, [120, 120, 120]);
+      expect(vol(s.done()), `prism inside out at yaw ${yaw}`).toBeCloseTo(48, 3);
+
+      // A ring listed CLOCKWISE from above must come out the same way up as
+      // one listed anticlockwise -- that normalisation is the whole point of
+      // `closed`, and without it half the fleet is lit from inside.
+      for (const dir of [1, -1]) {
+        s = new Soup(64);
+        const ring = [[-1, -2], [1, -2], [1, 2], [-1, 2]];
+        closed(s, (x, y, z) => [x, y, z], dir > 0 ? ring : ring.slice().reverse(),
+               0, 3, [200,200,200], [150,150,150], [90,90,90]);
+        expect(vol(s.done()), `closed() inside out, ring dir ${dir}`).toBeCloseTo(24, 3);
+      }
+
+      s = new Soup(256);
+      plane(s, 10, 800, -30, yaw);
+      expect(vol(s.done()), `the aircraft is inside out at yaw ${yaw}`).toBeGreaterThan(0);
+
+      s = new Soup(256);
+      heli(s, 10, 300, -30, yaw, 1.3);
+      expect(vol(s.done()), `the helicopter is inside out at yaw ${yaw}`).toBeGreaterThan(0);
+    }
+  });
+
+  it('the plane descends toward the real airport', () => {
+    const a = new Ambient(stubScene, THREE, M, { skyline: { x: 0, z: 0 } });
+    // PDX is north-EAST of the Burnside Bridge: +x and -z from the anchor.
+    expect(a.airport.x, 'the airport is east of downtown').toBeGreaterThan(3000);
+    expect(a.airport.z, 'the airport is north of downtown').toBeLessThan(-4000);
+
+    for (let k = 0; k < 4000 && !a.plane; k++) a.step(1 / 20, 0, 3, 0, live, NAMES.road);
+    expect(a.plane, 'no plane ever appeared').toBeTruthy();
+    // It flies TOWARD the airport, and it comes DOWN on the way. An approach
+    // that holds altitude is a plane going somewhere else, and reads as a
+    // sticker pinned to the sky.
+    const toward = (a.airport.x * a.plane.hx + a.airport.z * a.plane.hz) /
+                   Math.hypot(a.airport.x, a.airport.z);
+    expect(toward).toBeGreaterThan(0.5);
+    const y0 = AIR.plane.y0, y1 = AIR.plane.y1;
+    expect(y1).toBeLessThan(y0);
+    expect(y1, 'an airliner at rooftop height over downtown').toBeGreaterThan(200);
+  });
+
+  it('the whole layer is ONE draw call and stays small', () => {
+    const a = new Ambient(stubScene, THREE, M, { skyline: { x: 0, z: 0 } });
+    for (let k = 0; k < 400; k++) a.step(1 / 20, M.spawn.x, 3, M.spawn.z, live, NAMES.road);
+    expect(a.live, 'nothing drawn at all').toBeGreaterThan(50);
+    // The brief was "I don't want to get super heavy". Thirty cars, five
+    // boats, a plane and a helicopter live inside one geometry; if this ever
+    // needs raising, the question to ask first is whether it should be a
+    // second draw call instead.
+    expect(a.live, 'the ambient layer has got heavy').toBeLessThan(6000);
+    expect(a.mesh.geometry.attributes.position.array.length).toBeGreaterThanOrEqual(a.live * 9);
   });
 });

@@ -159,10 +159,81 @@ private cars. It failed that check first time and the check was wrong.
   is the first thing in `<head>`, before the import map and before the module,
   registered with CAPTURE so a subresource that 404s is caught too.
 
+## The layer that moves without you
+
+`public/pdx/game/crowd.js` and `game/ambient.js`. Between them: 46 pedestrians,
+30 cars, 7 boats, a helicopter and an airliner, in **two draw calls total** —
+each file rebuilds everything it owns into ONE merged non-indexed geometry every
+frame, which is a millisecond of array writes and no skinning, no instancing and
+no second material. A city where nothing moves but you reads as a photograph you
+are allowed to walk around in, and that is the whole job.
+
+**The lines they move along are real, and that is the part that matters.**
+
+* The crowd walks the **sidewalk / footway / path / crossing** centrelines out of
+  the loaded chunks. OSM only maps separate sidewalk ways downtown, so
+  `make_pavements()` in the bake generates one down both sides of every street
+  in `classes.PAVED` that has not got one — 9,265 of them — and suppresses the
+  run wherever a mapped pavement is already within 4 m. Without that, SE
+  Hawthorne is a road with lawn either side and three people on it.
+* The traffic drives the **carriageway** centrelines, the same records the road
+  ribbons are drawn from, and **keeps RIGHT** of them. Getting that sign
+  backwards is a head-on with every other car on the street; it is pinned in
+  `tests/pdx-runtime.test.mjs`, measured along the car's own right, which is
+  `(-uz, ux)` with +X east and +Z south.
+* The boats follow a **centreline measured down the Willamette at bake time**
+  (`river_route()`, carried in `manifest.routes.river` as `[x, z, halfWidth]`
+  every 40 m). It cannot be derived in the runtime: only the chunks around the
+  player are loaded, and a boat has to come from somewhere he has not walked to.
+  **It is NOT "the biggest water polygon"** — the biggest one reachable from this
+  bbox is the *Columbia*, four times the area and entirely north of the play
+  area, and picking by area put the route off the map and the scan came back
+  empty. The union is clipped to the play area first.
+* The airliner is aimed at the **real airport**: PDX's lat/lon projected through
+  the same anchor the city is baked against, which is 6 km north-east. Nothing
+  about the airport is modelled; what it buys is a plane going *somewhere*
+  rather than round a loop. It **descends** across its track, because an
+  approach that holds altitude reads as a sticker pinned to the sky.
+* The helicopter orbits **where the skyline says downtown is** — the far boxes
+  weighted by height, computed in `world.loadFar()`. A pair of coordinates in
+  `tune.js` would not survive the play area being moved or grown.
+
+Landmines already paid for here:
+
+* **A shape seen from underneath needs its bottom face.** The crowd's `box()`
+  skips it — right for a person standing on a pavement — and `ambient.js` has
+  its own `prism()` with all six, because a plane is seen from directly below.
+  Both are checked by the divergence theorem, same as the props.
+* **`closed()` normalises its ring's winding rather than trusting it**, because
+  a hull wound inside out still renders and what it costs is only the lighting,
+  which reads as "a bit dark" and nothing on screen disagrees with anything.
+* **A box car has exactly one asymmetry and it is the headlamps.** They went on
+  the boot first time — local **−Z is the nose**, so a point `d` forward is at
+  `dz = −d`, and the obvious sign is the wrong one. A test looks for the pale
+  lamp colour ahead of the red one along the direction of travel.
+* **Wheels have to show under the body.** The first car put the body's underside
+  at six centimetres and buried them, and a box flat on the road with no gap
+  under it reads as a skip at every distance.
+* **The rotor has to be PALE.** There is no translucency in a single opaque
+  merged mesh, so the only thing left to read a blur with is VALUE against a
+  pale sky — a dark grey rotor on a dark body is one black blob. Measured on a
+  shot at 180 m: the blades were there and invisible.
+* **A river is five kilometres long and he is standing on one bridge.** Boats
+  seeded once and left there means an empty river wherever he happens to be, so
+  one too far to see gives its seat back and is re-seated in view — never
+  closer than 260 m, because a barge fading up two hundred metres away is worse
+  than an empty river.
+* **`S` is the world's SOUTH edge.** Shadowing it with a chunk's shop list
+  inside `write_all` wrote a list of cafes into `manifest.world.south`, which
+  made the map overlay's player dot NaN and said nothing. A one-letter name in a
+  long function is how a constant gets quietly replaced.
+
 ## Still to do
 
-* **No traffic.** The cars are parked. Moving traffic wants the road graph as a
-  graph, which `connectors` already gives for free.
+* **Traffic does not obey anything.** No junctions, no signals, no queueing —
+  cars pass through each other and through the crowd. Shredworld's `crossGive`
+  is the worked answer to that if it is ever wanted, and it is a build on its
+  own.
 * **No interiors, no doors.** Buildings are closed shells.
 * **The hand-built landmark slot is empty.** Nothing is overridden yet; the
   machinery, the clear boxes and the tests are there waiting for the first GLB.

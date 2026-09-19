@@ -23,6 +23,10 @@ export function makeSky(scene) {
   scene.add(sun);
   scene.add(sun.target);
 
+  const fill = new THREE.DirectionalLight(SKY.fill, SKY.fillI);
+  fill.position.set(...SKY.fillDir).normalize().multiplyScalar(500);
+  scene.add(fill);
+
   // A dome rather than a flat background colour, so the horizon is a gradient
   // and the fog has something to fade INTO. BackSide, unlit, no depth write:
   // it is a backdrop, not a thing in the world.
@@ -41,5 +45,5 @@ export function makeSky(scene) {
   dome.renderOrder = -2;
   dome.frustumCulled = false;
   scene.add(dome);
-  return { sun, hemi, dome };
+  return { sun, fill, hemi, dome };
 }

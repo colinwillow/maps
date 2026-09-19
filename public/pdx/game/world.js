@@ -15,6 +15,7 @@ import * as THREE from 'three';
 import { parseChunk, parseFar } from './chunk.js';
 import { buildTerrain, buildBuildings, buildRoads, buildAreas } from './build.js';
 import { buildProps } from './props.js';
+import { buildShops } from './shops.js';
 import { STREAM, WATER, BUILDING, BUILDING_DEFAULT } from './tune.js';
 
 /**
@@ -137,6 +138,17 @@ export class World {
       face(E,F,G,H,[c[0]*1.06|0,c[1]*1.06|0,c[2]*1.06|0]);
       face(A,B,F,E,c); face(B,C,G,F,dk); face(C,D,H,G,c); face(D,A,E,H,dk);
     }
+    // Where downtown is, measured rather than typed: the skyline boxes weighted
+    // by how tall they are. The helicopter orbits this, and a number derived
+    // from the city survives the play area being moved or grown, which a pair
+    // of coordinates in tune.js would not.
+    let wx = 0, wz = 0, wsum = 0;
+    for (let i = 0; i < f.n; i++) {
+      const w = Math.max(0, f.top[i] - f.base[i]) ** 2;
+      wx += f.x[i] * w; wz += f.z[i] * w; wsum += w;
+    }
+    this.skyline = wsum > 0 ? { x: wx / wsum, z: wz / wsum } : { x: 0, z: 0 };
+
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
@@ -237,9 +249,11 @@ export class World {
     add(buildRoads(c.road, this.names.road, lod), this.opaque);
     add(buildBuildings(c.bldg, this.names.building, lod), this.opaque);
     if (lod === 'full' || lod === 'mid') add(buildProps(c.prop, this.names.prop, lod), this.opaque);
+    if (c.shop && c.shop.length) add(buildShops(c.shop, this.names.shop), this.opaque);
     add(buildAreas(c.area, this.names.area, true), this.water);
     this.root.add(g);
-    this.live.set(id, { group: g, lod, meshes, raw });
+    this.live.set(id, { group: g, lod, meshes, raw,
+                        shops: c.shop, ox: g.position.x, oz: g.position.z });
     this.ground.addChunk(i, j, c, this.names);
     this.pending.delete(id);
   }
@@ -256,4 +270,7 @@ export class World {
   stats() {
     return { live: this.live.size, fetching: this.fetching.size, tris: Math.round(this.tris) };
   }
+
+  /** Loaded chunks, for anything that needs to walk what is currently in the world. */
+  loaded() { return this.live.values(); }
 }

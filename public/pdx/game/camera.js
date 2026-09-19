@@ -35,13 +35,33 @@ export class Camera {
     const k = 1 - Math.pow(2, -dt / CAM.lookHL);
     this.lx += (tx - this.lx) * k; this.ly += (ty - this.ly) * k; this.lz += (tz - this.lz) * k;
 
-    const ca = Math.cos(this.pitch);
-    const bx = -Math.sin(this.az) * ca, bz = Math.cos(this.az) * ca, by = Math.sin(this.pitch);
-    const free = this.probe(ground, this.lx, this.ly, this.lz, bx, by, bz, CAM.dist);
+    // WHEN THERE IS NO ROOM BEHIND HIM, THE BOOM CLIMBS. In a street canyon --
+    // or against the one facade he happens to be standing at -- there can be
+    // half a metre behind his head and nothing will make a shot out of that.
+    // Swinging the BEARING would fight the thumb that owns it; swinging the
+    // PITCH does not, and in a city the sky is the one direction that is always
+    // open. Three probes, and the shallowest that has room wins.
+    let pitch = this.pitch, free = 0, bx = 0, by = 0, bz = 0;
+    for (const lift of CAM.lifts) {
+      const p = Math.min(CAM.pitchMax, this.pitch + lift);
+      const ca = Math.cos(p);
+      const tx = -Math.sin(this.az) * ca, tz = Math.cos(this.az) * ca, ty = Math.sin(p);
+      const f = this.probe(ground, this.lx, this.ly, this.lz, tx, ty, tz, CAM.dist);
+      if (f > free) { free = f; pitch = p; bx = tx; by = ty; bz = tz; }
+      if (f >= CAM.room) break;
+    }
+    this.shot = pitch;
     // Snap in, ease out.
     this.have = free < this.have ? free
       : this.have + (free - this.have) * (1 - Math.pow(2, -dt / 0.5));
-    const d = Math.max(CAM.minDist, this.have);
+    // CLAMPING TO A MINIMUM PUTS THE LENS INSIDE THE WALL. The probe returns
+    // how much room there actually is; taking `max(minDist, that)` overrides it
+    // with a number that is by definition too big, and a camera inside a
+    // facade is a black screen that reads as a broken renderer. On a tight
+    // pavement the shot is allowed to come right up on his shoulder instead,
+    // which is ugly and is never nothing.
+    const d = Math.max(CAM.hardMin, this.have);
+    void 0;
     this.cam.position.set(this.lx + bx * d, this.ly + by * d, this.lz + bz * d);
     this.cam.lookAt(this.lx, this.ly, this.lz);
   }

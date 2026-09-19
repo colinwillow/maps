@@ -52,6 +52,20 @@ Sections, each described where it is built in bake.py:
                            i16 xzy[nv*3]
                            u16 idx[nt*3]
 
+  SHOP  (count = n)      a business, already projected onto a building facade:
+                           u8  cat          palette bucket
+                           u8  flags        bit0 awning, bit1 landmark
+                           u8  yaw          the facade's OUTWARD normal, 0..255
+                           u8  w4           sign width in quarter-metres
+                           i16 x, z         chunk-local dm, on the wall
+                           i16 y            absolute dm, the pavement at the wall
+                           i16 h            sign centre above y, dm
+                           u16 name         index into NAME
+
+  NAME  (count = n)      u8 length + UTF-8, repeated. Names are clamped to 48
+                         bytes: a sign nobody can read at 40 characters is a
+                         sign nobody can read at 80, and the length is a u8.
+
   PROP  (count = n)      10 bytes each:
                            u8  kind
                            u8  yaw          0..255 over a full turn

@@ -25,7 +25,15 @@ export const SKY = {
   ambientSky:    0xa8c8e4,          // hemisphere light: cool from above,
   ambientGround: 0xa08e70,          // warm bounce from below. This pair is the
   ambientI: 1.22,                   // whole stylised shadow/light split, for free.
-  sunI: 1.15,
+  sunI: 1.12,
+  // A FILL, from the opposite quarter and much weaker. A hemisphere light gives
+  // a vertical wall the same answer whichever way it faces, so on its own the
+  // only thing separating a sunlit facade from a shaded one is the sun -- and
+  // that made every north and west wall in the city read as a hole. Three-point
+  // lighting's second lamp, for the cost of one more Lambert term.
+  fillDir: [-0.55, 0.38, -0.74],
+  fill: 0x9fb6cc,
+  fillI: 0.62,
   // ACES, at an exposure under one. Without tone mapping every lit surface in a
   // city of pale walls clips to flat white and the palette may as well not
   // exist -- the first build shipped that and read as grey cardboard. The sum
@@ -35,8 +43,19 @@ export const SKY = {
   exposure: 1.06,
 };
 
+// The character. He is a PBR skinned mesh in a city of flat-shaded vertex
+// colours, so he answers the light differently from everything around him --
+// and this scene has one sun, one hemisphere and no bounce at all, which leaves
+// his shaded side with nowhere to get light from. Feeding his own base map back
+// as a low emission is Shredworld's answer to exactly that. At 0.26 he read as
+// a silhouette; this is the dial.
+export const CHAR = { emissive: 0.55, height: 1.78 };
+
 export const CAM = {
-  dist: 7.2, minDist: 2.6, maxDist: 16,
+  dist: 7.2, minDist: 2.6, hardMin: 0.85, maxDist: 16,
+  // How much boom counts as "a shot", the extra pitch tried to find it, and the
+  // ceiling on how far the lens will climb looking.
+  room: 4.2, lifts: [0, 0.34, 0.72, 1.05], pitchMax: 1.32,
   height: 2.5,          // metres above his feet that the lens looks at
   pitch: 0.24,          // radians below horizontal, the default shot
   pitchHi: 0.62,        // the EYE key's second shot, for looking at the skyline
@@ -223,14 +242,144 @@ export const PROP_DEFAULT = { h: 1.2, c: 0x8a8578, kind: 'box' };
 export const LEAF_TINTS = [0x5c8a40, 0x6e9b45, 0x47733a, 0x7fa64e,
                            0x53803e, 0x86a552];
 
-// How far the world is live. `full` chunks carry everything; `mid` drops props and
-// pavement detail; past `mid` the skyline boxes in far.bin carry the horizon.
+// AGAINST that board rather than a fixed white -- a cream awning with white
+// lettering is a blank awning, which is what the first pass shipped.
+export const SHOP = {
+  food:     { c: 0x9c3b2e, ink: '#fff3e2' },
+  cafe:     { c: 0x6b4a33, ink: '#f7e9d4' },
+  bar:      { c: 0x3c4a63, ink: '#ffe6a8' },
+  shop:     { c: 0x3f6d63, ink: '#f4f7ee' },
+  grocery:  { c: 0x5c7a35, ink: '#f7fbe9' },
+  service:  { c: 0x5d5a52, ink: '#f2efe6' },
+  salon:    { c: 0x8a4a6b, ink: '#ffeef6' },
+  bank:     { c: 0x2f4f6e, ink: '#eaf2fb' },
+  pharmacy: { c: 0x2f6b53, ink: '#e9fbf2' },
+  culture:  { c: 0x6a4a8a, ink: '#f4ecff' },
+  hotel:    { c: 0x7a5c2c, ink: '#fff4dd' },
+  civic:    { c: 0x54606b, ink: '#eef3f7' },
+  landmark: { c: 0x8a7440, ink: '#fff8e4' },
+  fuel:     { c: 0x9a5a22, ink: '#fff0dd' },
+  other:    { c: 0x69655c, ink: '#f3f1ea' },
+};
+export const SHOP_DEFAULT = SHOP.other;
+
+export const SIGN = {
+  boardH: 0.72,        // the sign band above the shopfront
+  awning: 1.25,        // how far it reaches over the pavement
+  awningDrop: 0.42,    // and how far it falls doing it
+  valance: 0.26,       // the flap on the front edge
+  // The readable half. 48 names at 256x128 on one 1024 canvas is a size you can
+  // read from across the street; more slots means smaller type and a sign you
+  // cannot read is a sign that may as well be blank.
+  atlas: 1024, cols: 4, rows: 12,
+  range: 85,           // metres within which a name is drawn at all
+  every: 0.45,         // seconds between re-checks of the nearest set
+};
+
 // How far the world is live. These are the frame budget: at 500 m a chunk,
 // `keep` 1900 kept SIXTY-THREE chunks alive and drew 640k triangles for a view
 // that fog closes at 1.3 km. The horizon is far.bin's job, and it is one draw
 // call.
+// The crowd. Everything here is a look decision and a frame budget, and the
+// two are the same decision: `count` times sixty triangles, rebuilt every
+// frame, is the whole cost.
+export const CROWD = {
+  count: 46,           // walkers in the pool
+  spawn: 95,           // metres: where a free one is allowed to appear
+  keep: 150,           // and where it gives its seat back
+  draw: 135,
+  detail: 55,          // past this, no hat, bag, umbrella or dog
+  netEvery: 1.4,       // seconds between rebuilds of the pavement network
+  speed: [0.95, 1.65], // metres per second -- a real pavement is 1.2 to 1.5
+  stride: 3.6,
+  swing: 0.52,         // radians of leg swing at the hip
+  // Which road classes count as a pavement. A crowd walking down the middle of
+  // Burnside is worse than no crowd at all.
+  on: new Set(['sidewalk', 'footway', 'path', 'pedestrian', 'steps', 'crosswalk']),
+  skin: [0xe8c4a2, 0xd9a882, 0xb07a52, 0x8a5a3a, 0x5f3d28, 0xf0d6bb],
+  hair: [0x2b2118, 0x3d2c1d, 0x6b4a2a, 0x8a6a3a, 0xb8b0a6, 0x1a1a1c],
+  // Portland dresses in flannel, rain shells, hi-vis, black and thrifted
+  // colour. A crowd in one palette reads as a crowd of clones.
+  tops: [0x8a3b32, 0x2f4a63, 0x3c5a3a, 0x1f2024, 0xb5643c, 0x53406b,
+         0xc9a23c, 0x7a7f86, 0xd7d2c6, 0x2d6b6b, 0x9c4a6a, 0x4a3b2c],
+  legs: [0x36445c, 0x23262b, 0x4a4438, 0x2f3a46, 0x6a6154, 0x1c2733],
+  bags: [0x2b2f36, 0x5c4a34, 0x3d5a46, 0x7a3b3b, 0x2f4a63],
+  brollies: [0x1f2024, 0x8a3b32, 0x2f4a63, 0xc9a23c, 0x3c5a3a],
+  dogs: [0x5c4a34, 0x2b2118, 0xd7cbb4, 0x8a7a5a, 0x3a3a3c],
+  hatOdds: 0.30, bagOdds: 0.34, brollyOdds: 0.11, dogOdds: 0.06,
+};
+
 export const STREAM = {
   full: 480, mid: 1050, keep: 1250,
   perFrame: 1,          // chunks built per frame, so a hitch is never two chunks long
   fetchAhead: 6,
+};
+
+// ---------------------------------------------------------------------------
+// Ambient life: traffic, boats, aircraft.
+//
+// ONE BUDGET, DELIBERATELY SMALL. The brief was "a plane, boats, cars -- I
+// don't want to get super heavy", and the honest reading of that is that none
+// of this is the game: it is what stops the city looking like a photograph of
+// itself. So the whole layer is boxes in the crowd's merged-geometry trick --
+// one draw call for every vehicle, every hull and every aircraft on screen --
+// and the counts below are what a phone can carry without noticing.
+// ---------------------------------------------------------------------------
+export const TRAFFIC = {
+  count: 30,           // cars in the pool
+  spawn: 130,          // metres: where a free one may appear
+  keep: 230,           // and where it gives its seat back
+  draw: 200,
+  speed: [7.0, 13.5],  // m/s -- 25 to 30 mph, which is what these streets are
+  slow: 0.55,          // how much of that a residential street gets
+  // Which road classes carry traffic. A car on a footway is worse than no car.
+  on: new Set(['motorway', 'trunk', 'primary', 'secondary', 'tertiary',
+               'residential', 'unclassified', 'living_street']),
+  // Portland drives on the RIGHT, so a car sits to the right of the centreline
+  // in its direction of travel. Getting this backwards is a head-on collision
+  // with every other car on the street and it reads instantly.
+  lane: 0.26,          // fraction of the carriageway width, off the centre
+  len: 4.3, wide: 1.78, tall: 1.44,
+  // A sixth of the fleet is a van or a bus, because a street of identical
+  // saloons is as obviously repeated as a crowd of identical people.
+  bigOdds: 0.17, bigLen: 8.4, bigTall: 2.9,
+  bigColors: [0xe8e6e0, 0x3f5d8a, 0x7a8a92, 0x2f3338, 0xb4b8bc],
+};
+
+export const BOATS = {
+  count: 7,
+  draw: 1400,          // a river is a long view; a boat two bridges away counts
+  speed: [2.2, 6.5],
+  // A tug on the Willamette is 25 m and a runabout is 6. The spread is the
+  // point -- one size of boat reads as a decal.
+  len: [6, 30], beam: [2.2, 8.5],
+  hull: [0xd8d5cc, 0x2c4a63, 0x6e7378, 0x37503f, 0x8a3b32, 0x1f2024],
+  deck: [0xb9b2a2, 0x54585e, 0xd7d2c6],
+  wake: 0x9fb3b8,
+  lane: 0.55,          // fraction of the half width a boat may use
+};
+
+// The airport is a real place at a real bearing, and it is OUTSIDE the play
+// area -- PDX is six kilometres north-east of the Burnside Bridge. Nothing
+// about it is modelled; what it buys is a direction for an approach to come
+// from, so a plane crosses the sky going somewhere instead of on a loop.
+export const AIR = {
+  airport: [45.5887, -122.5975],   // PDX, runway 10R/28L
+  plane: {
+    every: [26, 70],     // seconds between passes
+    span: 4200,          // metres of track flown
+    y0: 900, y1: 260,    // it DESCENDS: an approach that holds altitude is a
+                         // plane going somewhere else, and reads as a sticker
+    speed: 82,
+    len: 34, wing: 32, body: 0xe6e8ea, tail: 0x2f4a63,
+  },
+  heli: {
+    radius: 620, y: 250, speed: 26,   // a news chopper, orbiting downtown
+    // THE ROTOR HAS TO BE PALE. A real one is a translucent blur, and there is
+    // no translucency to be had in a single opaque merged mesh -- so what is
+    // left to read it with is VALUE, against a pale sky, and a dark grey rotor
+    // on a dark body is one black blob at any distance. Measured off a shot at
+    // 180 m: the blades were there and invisible.
+    len: 15, body: 0x33383f, rotor: 0xc4cbd1, rpm: 4.2,
+  },
 };

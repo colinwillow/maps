@@ -27,12 +27,13 @@ export function parseChunk(buf) {
       count: v.getUint32(o + 12, true),
     };
   }
-  const out = { terr: null, bldg: [], road: [], area: [], prop: null };
+  const out = { terr: null, bldg: [], road: [], area: [], prop: null, shop: [] };
   if (sec.TERR) out.terr = readTerrain(v, sec.TERR);
   if (sec.BLDG) out.bldg = readBuildings(v, sec.BLDG);
   if (sec.ROAD) out.road = readRoads(v, sec.ROAD);
   if (sec.AREA) out.area = readAreas(v, sec.AREA);
   if (sec.PROP) out.prop = readProps(v, sec.PROP);
+  if (sec.SHOP) out.shop = readShops(v, sec.SHOP, sec.NAME);
   return out;
 }
 
@@ -126,6 +127,31 @@ function readProps(v, s) {
     p += 10;
   }
   return { n, kind, yaw, scale, tint, pos };
+}
+
+function readShops(v, s, ns) {
+  const names = [];
+  if (ns) {
+    let p = ns.off;
+    const dec = new TextDecoder();
+    for (let i = 0; i < ns.count; i++) {
+      const n = v.getUint8(p); p += 1;
+      names.push(dec.decode(new Uint8Array(v.buffer, p, n))); p += n;
+    }
+  }
+  let p = s.off;
+  const out = new Array(s.count);
+  for (let k = 0; k < s.count; k++) {
+    const cat = v.getUint8(p), flags = v.getUint8(p + 1);
+    const yaw = v.getUint8(p + 2) / 256 * Math.PI * 2, w = v.getUint8(p + 3) * 0.25;
+    p += 4;
+    const x = v.getInt16(p, true) * DM, z = v.getInt16(p + 2, true) * DM;
+    const y = v.getInt16(p + 4, true) * DM, h = v.getInt16(p + 6, true) * DM;
+    p += 8;
+    const ni = v.getUint16(p, true); p += 2;
+    out[k] = { cat, flags, yaw, w, x, z, y, h, name: names[ni] || '' };
+  }
+  return out;
 }
 
 export function parseFar(buf) {
