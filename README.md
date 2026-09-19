@@ -359,6 +359,48 @@ their dots cannot steal the taps that mean "walk over there".
   Guarding the attach on it meant the layers were never added at all, silently.
   Don't gate on it; attach, and retry on the next `styledata` if it throws.
 
+## Portland: the walkable city
+
+`public/pdx/` — a second, separate app at **`/pdx/`**. Twin-stick, mobile-first,
+native ES modules with vendored three and **no build step**; Vite copies
+`public/` verbatim, so the bundler never touches it. It shares nothing with the
+MapLibre app above except this repository.
+
+It is the whole of downtown Portland and the inner east and west sides — 5 km
+square — built from open data and walkable at street level: 17,045 buildings at
+their real heights, 14,561 road segments with real widths and pavements, every
+bridge across the Willamette with a deck you can walk over and a river you can
+swim under, 3DEP terrain, and 115,672 pieces of street furniture.
+
+```sh
+npm run pdx:fetch    # ~6 MB of Overture parquet, cached
+npm run pdx:bake     # ~50 s -> 100 chunk files, 5.2 MB total
+npm run test:pdx     # the data and the runtime, headless
+npm run pdx:shot -- --at 45.5231,-122.6690 --up 40   # look at it
+```
+
+`tools/pdx/README.md` is the pipeline; `CLAUDE.md` is the working rules and the
+landmines. Two things are worth knowing before reading either.
+
+**It is a SCAFFOLD, not the final art.** Every street, kerb, roofline and bridge
+deck is in the right place at the right height — the expensive part, and the
+part nobody wants to author — so that one thing at a time can be built properly
+by hand and dropped in with the city already standing around it. That is what
+`data/landmarks.json`'s `overrides` are: a model, plus a box the generator
+agrees to leave alone, in the collider as well as in the picture. The bake
+writes a ready-made box for all 73 named bridges and 351 named buildings.
+
+**The data arrives over plain HTTP range requests and no API key.** Overture
+publishes 277 GB of GeoParquet on a public S3 bucket; every row carries a `bbox`
+struct, Parquet keeps statistics for it per row group, and the rows are
+spatially sorted — so one city costs a 1.4 MB footer read and a dozen row
+groups. Measured: **58 MB fetched, 19 seconds, 125,006 buildings.**
+
+### Attribution
+
+© OpenStreetMap contributors, © Overture Maps Foundation (ODbL), USGS 3DEP
+(public domain). Carried in `data/manifest.json` and shown on the boot card.
+
 ## Architecture: the layer seam
 
 Everything this platform will grow — basemap, buildings, routes, every pin

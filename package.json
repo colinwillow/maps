@@ -10,7 +10,13 @@
     "test": "npm run test:unit && npm run test:smoke && npm run test:three",
     "test:unit": "vitest run",
     "test:smoke": "node tests/smoke.mjs",
-    "test:three": "node tests/three.mjs"
+    "test:three": "node tests/three.mjs",
+    "pdx:fetch": "python3 tools/pdx/fetch_city.py",
+    "pdx:bake": "python3 tools/pdx/bake.py",
+    "pdx:map": "python3 tools/pdx/preview.py 1600 /tmp/pdx-map.png",
+    "pdx:shot": "node tools/pdx/shot.mjs",
+    "pdx:geo": "python3 tools/pdx/test_geo.py",
+    "test:pdx": "vitest run tests/pdx-data.test.mjs tests/pdx-runtime.test.mjs"
   },
   "dependencies": {
     "maplibre-gl": "^5.6.0",
